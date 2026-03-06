@@ -6,7 +6,20 @@
 <body>
 
 <h2>Test Completed</h2>
-<p>Your Score: <strong>{{ score }}</strong></p>
+
+<h3>Score: {{ score }} / {{ total }}</h3>
+
+<h3>Accuracy: {{ accuracy }}%</h3>
+
+<h3>Performance Summary</h3>
+
+<ul>
+<li><strong>Total Questions:</strong> {{ total }}</li>
+<li><strong>Correct Answers:</strong> {{ correct }}</li>
+<li><strong>Wrong Answers:</strong> {{ wrong }}</li>
+<li><strong>Unattempted Questions:</strong> {{ unattempted }}</li>
+</ul>
 
 </body>
+</html>
 </html>

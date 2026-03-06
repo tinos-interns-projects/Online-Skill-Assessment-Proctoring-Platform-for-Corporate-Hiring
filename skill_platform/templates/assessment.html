@@ -1,93 +1,101 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Online Skill Assessment</title>
+<meta charset="UTF-8">
+<title>Online Skill Assessment</title>
 </head>
+
 <body>
 
 {% if error %}
-  <p style="color: red; font-weight: bold;">
-    {{ error }}
-  </p>
+<p style="color:red;font-weight:bold;">
+{{ error }}
+</p>
 {% endif %}
 
 <h2>Online Skill Assessment</h2>
 
-<!-- Timer -->
-<h3>Time Remaining: <span id="timer"></span></h3>
+<h3>Time Remaining: <span id="timer">Loading...</span></h3>
 
 <form method="post" id="examForm">
-    {% csrf_token %}
 
-    <input type="hidden" id="duration" value="{{ test.duration_minutes }}">
+{% csrf_token %}
 
-    {% for question in questions %}
-        <p>
-            <strong>{{ forloop.counter }}. {{ question.question_text }}</strong>
-        </p>
+<input type="hidden" id="endTime" value="{{ test.scheduled_end|date:'c' }}">
 
-        <label>
-            <input type="radio" name="q{{ question.id }}" value="a">
-            {{ question.option_a }}
-        </label>
-        <br>
+{% for question in questions %}
 
-        <label>
-            <input type="radio" name="q{{ question.id }}" value="b">
-            {{ question.option_b }}
-        </label>
-        <br>
+<p>
+<strong>{{ forloop.counter }}. {{ question.question_text }}</strong>
+</p>
 
-        <label>
-            <input type="radio" name="q{{ question.id }}" value="c">
-            {{ question.option_c }}
-        </label>
-        <br>
+<label>
+<input type="radio" name="q{{ question.id }}" value="a">
+{{ question.option_a }}
+</label><br>
 
-        <label>
-            <input type="radio" name="q{{ question.id }}" value="d">
-            {{ question.option_d }}
-        </label>
-        <br>
+<label>
+<input type="radio" name="q{{ question.id }}" value="b">
+{{ question.option_b }}
+</label><br>
 
-        <hr>
-    {% endfor %}
+<label>
+<input type="radio" name="q{{ question.id }}" value="c">
+{{ question.option_c }}
+</label><br>
 
-    <button type="submit">Submit Test</button>
+<label>
+<input type="radio" name="q{{ question.id }}" value="d">
+{{ question.option_d }}
+</label><br>
+
+<hr>
+
+{% endfor %}
+
+<button type="submit">Submit Test</button>
 
 </form>
 
-<!-- Timer Script -->
 <script>
 
-let duration = document.getElementById("duration").value * 60; // convert minutes to seconds
+let endTimeString = document.getElementById("endTime").value;
+let endTime = new Date(endTimeString).getTime();
+
 let display = document.getElementById("timer");
 
 function startTimer() {
 
-    let timer = duration;
+let interval = setInterval(function () {
 
-    let interval = setInterval(function () {
+let now = new Date().getTime();
 
-        let minutes = Math.floor(timer / 60);
-        let seconds = timer % 60;
+let remaining = endTime - now;
 
-        minutes = minutes < 10 ? "0" + minutes : minutes;
-        seconds = seconds < 10 ? "0" + seconds : seconds;
+if (remaining <= 0) {
 
-        display.textContent = minutes + ":" + seconds;
+clearInterval(interval);
 
-        if (--timer < 0) {
+display.textContent = "00:00";
 
-            clearInterval(interval);
+alert("Time is up! Submitting your test.");
 
-            alert("Time is up! Submitting your test.");
+document.getElementById("examForm").submit();
 
-            document.getElementById("examForm").submit();
-        }
+return;
 
-    }, 1000);
+}
+
+let minutes = Math.floor((remaining / 1000) / 60);
+let seconds = Math.floor((remaining / 1000) % 60);
+
+minutes = minutes < 10 ? "0" + minutes : minutes;
+seconds = seconds < 10 ? "0" + seconds : seconds;
+
+display.textContent = minutes + ":" + seconds;
+
+}, 1000);
+
 }
 
 window.onload = startTimer;

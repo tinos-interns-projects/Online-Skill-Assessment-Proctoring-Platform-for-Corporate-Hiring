@@ -15,9 +15,12 @@ from django.utils import timezone
 from django.db import transaction
 from core.models import Test, Attempt, Answer, Result, TestQuestion
 from django.contrib.auth import authenticate, login
+from django.core.mail import send_mail
 
 
 def login_view(request):
+
+    next_url = request.GET.get("next")
 
     if request.method == "POST":
 
@@ -29,11 +32,14 @@ def login_view(request):
         if user is not None:
             login(request, user)
 
-            # ADMIN CHECK (superuser or staff)
+            if next_url:
+                return redirect(next_url)
+
+            # Admin
             if user.is_superuser or user.is_staff:
                 return redirect("admin_dashboard")
 
-            # ROLE CHECK
+            # Role based redirect
             if hasattr(user, "userprofile"):
                 role = user.userprofile.role
 
@@ -43,14 +49,10 @@ def login_view(request):
                 if role == "candidate":
                     return redirect("candidate_dashboard")
 
-            # fallback
-            return redirect("login")
-
         else:
             return render(request, "login.html", {"error": "Invalid username or password"})
 
     return render(request, "login.html")
-
 
 from django.contrib.auth import logout
 
@@ -63,10 +65,11 @@ def logout_view(request):
 @login_required
 def assessment(request):
 
+    # Allow only candidates
     if request.user.userprofile.role != "candidate":
         return redirect("login")
 
-    # Get candidate's test
+    # Get candidate's active test
     test = Test.objects.filter(
         user=request.user,
         is_completed=False
@@ -79,7 +82,7 @@ def assessment(request):
         })
 
     # -------------------------
-    # SCHEDULE LOCK (IMPORTANT)
+    # SCHEDULE LOCK
     # -------------------------
     now = timezone.now()
 
@@ -110,22 +113,30 @@ def assessment(request):
             "error": "You have already attempted this test."
         })
 
-    # Create attempt if not exists
+    # Create attempt session if not exists
     attempt, created = Attempt.objects.get_or_create(
         user=request.user,
         test=test,
         defaults={"is_completed": False}
     )
 
-    # Load questions
+    # -------------------------
+    # LOAD TEST QUESTIONS
+    # -------------------------
     test_questions = TestQuestion.objects.filter(test=test)
     questions = [tq.question for tq in test_questions]
 
+    # -------------------------
+    # SUBMIT TEST
+    # -------------------------
     if request.method == "POST":
 
         with transaction.atomic():
 
             score = 0
+            correct = 0
+            wrong = 0
+            unattempted = 0
 
             if attempt.is_completed:
                 return redirect("assessment")
@@ -134,22 +145,31 @@ def assessment(request):
 
                 selected = request.POST.get(f"q{question.id}")
 
-                if selected:
+                # Unattempted question
+                if not selected:
+                    unattempted += 1
+                    continue
 
-                    is_correct = selected.lower() == question.correct_option.lower()
+                is_correct = selected.lower() == question.correct_option.lower()
 
-                    Answer.objects.create(
-                        attempt=attempt,
-                        question=question,
-                        selected_option=selected.lower(),
-                        is_correct=is_correct,
-                        skill=question.skill,
-                        difficulty=question.difficulty,
-                    )
+                Answer.objects.create(
+                    attempt=attempt,
+                    question=question,
+                    selected_option=selected.lower(),
+                    is_correct=is_correct,
+                    skill=question.skill,
+                    difficulty=question.difficulty,
+                )
 
-                    if is_correct:
-                        score += 1
+                if is_correct:
+                    score += 1
+                    correct += 1
+                else:
+                    wrong += 1
 
+            # -------------------------
+            # SAVE RESULT
+            # -------------------------
             Result.objects.create(
                 user=request.user,
                 test=test,
@@ -158,17 +178,24 @@ def assessment(request):
                 total_questions=len(questions),
             )
 
+            # Mark attempt completed
             attempt.is_completed = True
             attempt.completed_at = timezone.now()
             attempt.save()
 
+            # Mark test completed
             test.is_completed = True
             test.completed_at = timezone.now()
             test.save()
 
+            accuracy = (score / len(questions)) * 100
+
             return render(request, "result.html", {
                 "score": score,
                 "total": len(questions),
+                "correct": correct,
+                "wrong": wrong,
+                "unattempted": unattempted
             })
 
     return render(request, "assessment.html", {
@@ -221,11 +248,8 @@ from django.http import JsonResponse
 from .models import Test, TestBlueprint, TestQuestion, Attempt, Result
 from core.services import submit_answer, finalize_test
 
-
 from django.utils import timezone
-from django.http import JsonResponse
-from django.shortcuts import get_object_or_404
-from django.contrib.auth.decorators import login_required
+
 
 @login_required
 def start_test(request, blueprint_id):
@@ -589,8 +613,32 @@ def employer_dashboard(request):
         )
 
         invitation_link = request.build_absolute_uri(f"/invite/{token}/")
+        from django.core.mail import send_mail
 
-        request.session["success_message"] = f"Test assigned successfully. Invitation link: {invitation_link}"
+        # Send invitation email
+        send_mail(
+            subject="Online Assessment Invitation",
+            message=f"""
+        Hello {candidate.username},
+
+        You have been invited to attend an online assessment.
+
+        Test: {blueprint.name}
+
+        Click the link below to start your test:
+        {invitation_link}
+
+        Please complete the test within the scheduled time.
+
+        Best regards,
+        Assessment Platform
+        """,
+            from_email=None,
+            recipient_list=[candidate.email],
+            fail_silently=False,
+        )
+
+        request.session["success_message"] = "Test assigned successfully. Invitation email sent to the candidate."
         return redirect("employer_dashboard")
 
     # -----------------------------
@@ -645,12 +693,24 @@ def employer_dashboard(request):
 from django.shortcuts import get_object_or_404
 from django.http import JsonResponse
 from core.models import TestInvitation
+from django.contrib.auth import logout
 
 
-@login_required
 def accept_invitation(request, token):
 
+    # If user not logged in → redirect to login and come back here
+    if not request.user.is_authenticated:
+        return redirect(f"/login/?next=/invite/{token}/")
+
     invitation = get_object_or_404(TestInvitation, token=token)
+
+    print("CURRENT USER:", request.user)
+
+    # DEBUG (temporary)
+    print("Logged in user:", request.user)
+    print("Invitation candidate:", invitation.candidate)
+    print("Logged user ID:", request.user.id)
+    print("Invitation candidate ID:", invitation.candidate.id)
 
     # Invitation already used
     if invitation.is_used:
@@ -658,40 +718,45 @@ def accept_invitation(request, token):
             "message": "This invitation link has already been used."
         })
 
+    
+
     # Security check
     if request.user != invitation.candidate:
-        return render(request, "invitation_error.html", {
-            "message": "You are not authorized to access this test."
-        })
+
+        # If someone else is logged in (admin/employer)
+        if request.user.is_authenticated:
+           logout(request)
+
+        # Redirect to login and come back to invitation
+        return redirect(f"/login/?next=/invite/{token}/")
 
     test = invitation.test
     now = timezone.now()
 
-    # 🔒 Test not started yet
+    # Test not started
     if test.scheduled_start and now < test.scheduled_start:
         return render(request, "test_not_started.html", {
             "start_time": test.scheduled_start
         })
 
-    # 🔒 Test expired
+    # Test expired
     if test.scheduled_end and now > test.scheduled_end:
         return render(request, "invitation_error.html", {
             "message": "This test has expired."
         })
 
-    # Create attempt session
+    # Create attempt
     attempt, created = Attempt.objects.get_or_create(
         user=request.user,
         test=test,
-        is_completed=False
+        defaults={"is_completed": False}
     )
 
-    # Mark invitation used
     invitation.is_used = True
     invitation.save()
 
-    # Redirect to test questions
-    return redirect(f"/question/{test.id}/")
+    return redirect("question_view", test_id=test.id)
+
 
 @login_required
 def employer_results(request):
