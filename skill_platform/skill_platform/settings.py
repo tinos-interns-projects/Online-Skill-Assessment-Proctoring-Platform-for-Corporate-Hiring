@@ -37,11 +37,12 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+
     'corsheaders',
     'rest_framework',
-    'core'
-]
 
+    'core',
+]
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
@@ -134,3 +135,4 @@ LOGOUT_REDIRECT_URL = '/login/'
 # CSRF settings
 CSRF_COOKIE_SECURE = False
 CSRF_TRUSTED_ORIGINS = ["http://127.0.0.1:8000"]
+CORS_ALLOW_ALL_ORIGINS = True
