@@ -1,0 +1,57 @@
+<h1>Candidate Report</h1>
+
+<h3>Candidate: {{ candidate }}</h3>
+<h3>Test: {{ test }}</h3>
+
+<hr>
+
+<h2>Score: {{ score }} / {{ total }}</h2>
+<h3>Accuracy: {{ accuracy }}%</h3>
+
+<p>Correct: {{ correct }}</p>
+<p>Wrong: {{ wrong }}</p>
+<p>Unattempted: {{ unattempted }}</p>
+
+<hr>
+
+<h2>Proctoring Violations</h2>
+
+<p><strong>Total Violations:</strong> {{ violations|length }}</p>
+
+{% if violations|length >= 3 %}
+<p style="color:red;">
+<strong>Exam Auto-Submitted due to Proctoring Violations</strong>
+</p>
+{% endif %}
+
+{% if violation_summary %}
+<ul>
+{% for v in violation_summary %}
+<li>{{ v.activity_type }} : {{ v.count }}</li>
+{% endfor %}
+</ul>
+{% else %}
+<p>No violations detected</p>
+{% endif %}
+
+<hr>
+
+<h2>Webcam Monitoring Evidence</h2>
+
+{% if webcam_images %}
+<div style="display:flex; flex-wrap:wrap; gap:15px;">
+
+{% for img in webcam_images %}
+
+<div style="border:1px solid #ccc; padding:10px;">
+<img src="{{ img.image.url }}" width="200">
+<p style="font-size:12px;">{{ img.timestamp }}</p>
+</div>
+
+{% endfor %}
+
+</div>
+
+{% else %}
+<p>No webcam images captured.</p>
+{% endif %}
