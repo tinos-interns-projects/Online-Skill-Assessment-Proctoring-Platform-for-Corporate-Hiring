@@ -150,11 +150,8 @@ EMAIL_HOST_USER = "sythyaaneesh@gmail.com"
 EMAIL_HOST_PASSWORD = "nrgbgpdftquujbqp"
 
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
-<<<<<<< HEAD
-# >>>>>>> 298ff4f612c027eb22ca9a88b0f53f3a142df454
-=======
 
 # Media file configuration (for uploaded files like webcam images)
 MEDIA_URL = "/media/"
 MEDIA_ROOT = os.path.join(BASE_DIR, "media")
->>>>>>> 4a0f267 (Project update)
+
