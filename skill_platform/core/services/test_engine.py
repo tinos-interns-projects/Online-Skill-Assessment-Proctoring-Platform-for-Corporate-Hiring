@@ -1,7 +1,7 @@
 from django.utils import timezone
 from django.db import transaction
 
-from core.models import Attempt, Result, TestQuestion
+from core.models import Attempt, Result, TestQuestion, Question, Answer
 from core.services.blueprint_validator import (
     validate_blueprint,
     BlueprintValidationError
@@ -13,23 +13,24 @@ class TestEngineError(Exception):
 
 
 # =========================================================
-# 1️⃣ Automatic Question Generation (On Test Creation)
+# 1️⃣ Automatic Question Generation (BlueprintRule Based)
 # =========================================================
 
 def generate_test_questions(test):
     """
-    Automatically generate questions when a Test is created.
-    This function is production-safe:
-    - Prevents duplicate generation
-    - Validates blueprint
-    - Uses transaction atomicity
+    Generate questions based on BlueprintRule
+
+    ✔ Prevent duplicate generation
+    ✔ Validate blueprint
+    ✔ Use skill + difficulty + count from BlueprintRule
+    ✔ Ensure at least 1 coding question per rule (if available)
+    ✔ Avoid duplicate questions
     """
 
     # Prevent duplicate generation
     if getattr(test, "is_generated", False):
         return
 
-    # Extra safety check
     if TestQuestion.objects.filter(test=test).exists():
         test.is_generated = True
         test.save(update_fields=["is_generated"])
@@ -45,18 +46,51 @@ def generate_test_questions(test):
     with transaction.atomic():
 
         selected_questions = []
+        used_question_ids = set()
 
         for rule in blueprint.rules.all():
 
-            questions = rule.skill.questions.filter(
+            # 🔹 Get questions for skill + difficulty
+            base_qs = Question.objects.filter(
+                skill=rule.skill,
                 difficulty=rule.difficulty
-            ).order_by("?")[:rule.number_of_questions]
+            ).exclude(id__in=used_question_ids)
 
-            selected_questions.extend(questions)
+            # 🔹 Split MCQ and Coding
+            mcq_qs = base_qs.filter(question_type='mcq')
+            coding_qs = base_qs.filter(question_type='coding')
+
+            total_needed = rule.number_of_questions
+
+            if total_needed <= 0:
+                continue
+
+            selected = []
+
+            # 🔥 Ensure at least 1 coding question (if available)
+            coding_count = 1 if coding_qs.exists() else 0
+            mcq_count = total_needed - coding_count
+
+            # Select MCQ
+            if mcq_count > 0:
+                mcqs = list(mcq_qs.order_by("?")[:mcq_count])
+                selected.extend(mcqs)
+
+            # Select Coding
+            if coding_count > 0:
+                codings = list(coding_qs.order_by("?")[:coding_count])
+                selected.extend(codings)
+
+            # Track used questions
+            for q in selected:
+                used_question_ids.add(q.id)
+
+            selected_questions.extend(selected)
 
         if not selected_questions:
             raise TestEngineError("No questions generated from blueprint.")
 
+        # 🔹 Save questions
         for question in selected_questions:
             TestQuestion.objects.create(
                 test=test,
@@ -68,30 +102,20 @@ def generate_test_questions(test):
 
 
 # =========================================================
-# 2️⃣ Submit Answer (Auto Evaluate)
+# 2️⃣ Submit Answer (MCQ + Coding)
 # =========================================================
 
-from core.models import Attempt, Answer
-
-
 def submit_answer(user, test, question, selected_option):
-    """
-    Save candidate answer inside active test session
-    """
 
-    # 🔐 Security: Only test owner can answer
     if test.user != user:
         raise TestEngineError("Unauthorized access.")
 
-    # 🔐 Test must be generated
     if not test.is_generated:
         raise TestEngineError("Test is not ready.")
 
-    # 🔐 Cannot answer after completion
     if test.is_completed:
         raise TestEngineError("Test already completed.")
 
-    # 🧠 Get active test session
     attempt = Attempt.objects.filter(
         user=user,
         test=test,
@@ -101,35 +125,54 @@ def submit_answer(user, test, question, selected_option):
     if not attempt:
         raise TestEngineError("No active test session found.")
 
-    # 🔐 Prevent duplicate answer for same question
+    # Prevent duplicate answers
     if Answer.objects.filter(attempt=attempt, question=question).exists():
         raise TestEngineError("Question already answered.")
 
-    if not selected_option:
-        is_correct = False
-    else:
-        is_correct = selected_option.lower() == question.correct_option.lower()
+    # =========================
+    # MCQ
+    # =========================
+    if question.question_type == "mcq":
 
-    # ✅ Store answer (NOT Attempt)
-    answer = Answer.objects.create(
-        attempt=attempt,
-        question=question,
-        selected_option=selected_option,
-        is_correct=is_correct,
-        skill=question.skill,
-        difficulty=question.difficulty,
-    )
+        is_correct = (
+            selected_option and
+            selected_option.lower() == question.correct_option.lower()
+        )
+
+        answer = Answer.objects.create(
+            attempt=attempt,
+            question=question,
+            selected_option=selected_option,
+            is_correct=is_correct,
+            skill=question.skill,
+            difficulty=question.difficulty,
+        )
+
+    # =========================
+    # CODING
+    # =========================
+    elif question.question_type == "coding":
+
+        answer = Answer.objects.create(
+            attempt=attempt,
+            question=question,
+            code_answer=selected_option,
+            is_correct=False,
+            skill=question.skill,
+            difficulty=question.difficulty,
+        )
+
+    else:
+        raise TestEngineError("Unknown question type.")
 
     return answer
 
+
 # =========================================================
-# 3️⃣ Finalize Test (Calculate Result)
+# 3️⃣ Finalize Test (Result + Analytics)
 # =========================================================
 
 def finalize_test(attempt):
-    """
-    Finalize test session and generate analytics
-    """
 
     if attempt.is_completed:
         raise TestEngineError("Test already finalized.")
@@ -140,12 +183,20 @@ def finalize_test(attempt):
         raise TestEngineError("No answers submitted.")
 
     total_questions = answers.count()
-    correct_answers = answers.filter(is_correct=True).count()
+
+    # ✔ Only MCQ contributes to score
+    correct_answers = answers.filter(
+        question__question_type='mcq',
+        is_correct=True
+    ).count()
 
     accuracy = round((correct_answers / total_questions) * 100, 2)
 
-    # 📊 Skill-wise breakdown
+    # =========================
+    # Skill-wise breakdown
+    # =========================
     skill_data = {}
+
     for answer in answers:
         skill_name = answer.skill.name if answer.skill else "Unknown"
 
@@ -153,11 +204,15 @@ def finalize_test(attempt):
             skill_data[skill_name] = {"correct": 0, "total": 0}
 
         skill_data[skill_name]["total"] += 1
+
         if answer.is_correct:
             skill_data[skill_name]["correct"] += 1
 
-    # 📊 Difficulty-wise breakdown
+    # =========================
+    # Difficulty-wise breakdown
+    # =========================
     difficulty_data = {}
+
     for answer in answers:
         level = answer.difficulty
 
@@ -165,6 +220,7 @@ def finalize_test(attempt):
             difficulty_data[level] = {"correct": 0, "total": 0}
 
         difficulty_data[level]["total"] += 1
+
         if answer.is_correct:
             difficulty_data[level]["correct"] += 1
 

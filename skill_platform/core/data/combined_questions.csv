@@ -1,0 +1,41 @@
+question_text,option_a,option_b,option_c,option_d,correct_option,skill,topic,difficulty,question_type,code_solution
+What is Python?,Programming Language,Database,Operating System,Network,A,Python,Basics,easy,mcq,
+Which keyword defines a function?,def,func,function,lambda,A,Python,Functions,easy,mcq,
+Which data type is mutable?,Tuple,String,List,Set,C,Python,Data Types,easy,mcq,
+Which loop runs until condition fails?,for,while,loop,repeat,B,Python,Loops,easy,mcq,
+Which operator is used for exponentiation?,^,**,*,//,B,Python,Operators,easy,mcq,
+What is Java?,Programming Language,Database,OS,Network,A,Java,Basics,easy,mcq,
+Which concept allows reuse?,Inheritance,Encapsulation,Polymorphism,Abstraction,A,Java,OOP,medium,mcq,
+What is JVM?,Java Machine,Virtual Machine,Compiler,Interpreter,B,Java,Core,medium,mcq,
+Which keyword is used for inheritance?,extends,implements,inherit,super,A,Java,OOP,medium,mcq,
+Which method is entry point?,start(),main(),run(),init(),B,Java,Basics,easy,mcq,
+Find next number 2,4,6,?,8,10,12,14,A,Aptitude,Series,easy,mcq,
+If 5+3*2=?,16,11,13,10,B,Aptitude,Math,easy,mcq,
+Find missing number 1,3,5,?,9,7,8,10,6,B,Aptitude,Series,easy,mcq,
+A train travels 60km in 1hr. Speed?,60kmph,50kmph,40kmph,30kmph,A,Aptitude,Speed,easy,mcq,
+If 10% of 200=?,10,20,30,40,B,Aptitude,Percentage,easy,mcq,
+Which is prime number?,4,6,9,7,D,Aptitude,Numbers,easy,mcq,
+Which is largest?,2,8,5,3,B,Aptitude,Comparison,easy,mcq,
+What is square of 5?,10,20,25,30,C,Aptitude,Math,easy,mcq,
+Which is even?,3,7,10,9,C,Aptitude,Numbers,easy,mcq,
+Solve: 12/4=?,2,3,4,5,B,Aptitude,Math,easy,mcq,
+Reverse a string,,,,,,Python,Strings,medium,coding,def reverse(s): return s[::-1]
+Find factorial of a number,,,,,,Python,Math,medium,coding,def fact(n): return 1 if n==0 else n*fact(n-1)
+Check palindrome string,,,,,,Python,Strings,medium,coding,def is_palindrome(s): return s==s[::-1]
+Find maximum in list,,,,,,Python,Lists,medium,coding,def max_list(lst): return max(lst)
+Sort a list,,,,,,Python,Lists,medium,coding,def sort_list(lst): return sorted(lst)
+Check even or odd,,,,,,Python,Math,easy,coding,def check(n): return "Even" if n%2==0 else "Odd"
+Sum of digits,,,,,,Python,Math,easy,coding,def sum_digits(n): return sum(map(int,str(n)))
+Find length of string,,,,,,Python,Strings,easy,coding,def length(s): return len(s)
+Find second largest number,,,,,,Python,Lists,hard,coding,def second_largest(lst): return sorted(lst)[-2]
+Remove duplicates from list,,,,,,Python,Lists,medium,coding,def remove_dup(lst): return list(set(lst))
+Write Java program for factorial,,,,,,Java,Math,medium,coding,// Java code for factorial
+Check palindrome in Java,,,,,,Java,Strings,medium,coding,// Java palindrome code
+Find largest element in Java array,,,,,,Java,Arrays,medium,coding,// Java max array
+Reverse string in Java,,,,,,Java,Strings,medium,coding,// Java reverse string
+Sort array in Java,,,,,,Java,Arrays,medium,coding,// Java sort array
+Find sum of array in Java,,,,,,Java,Arrays,easy,coding,// Java sum array
+Check even odd in Java,,,,,,Java,Math,easy,coding,// Java even odd
+Find length of string in Java,,,,,,Java,Strings,easy,coding,// Java string length
+Find Fibonacci series,,,,,,Python,Math,medium,coding,def fib(n): return n if n<=1 else fib(n-1)+fib(n-2)
+Check prime number,,,,,,Python,Math,medium,coding,def is_prime(n): return all(n%i!=0 for i in range(2,n))

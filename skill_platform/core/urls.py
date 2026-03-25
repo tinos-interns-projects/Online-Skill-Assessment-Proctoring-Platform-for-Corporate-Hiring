@@ -43,4 +43,6 @@ urlpatterns = [
     # Webcam monitoring endpoint
     path("save-webcam-frame/", views.save_webcam_frame, name="save_webcam_frame"),
 
+    path("run-code/", views.run_code, name="run_code"),
+
 ]

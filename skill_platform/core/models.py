@@ -30,6 +30,7 @@ class TestBlueprint(models.Model):
     name = models.CharField(max_length=200)
     description = models.TextField(blank=True)
 
+
     def __str__(self):
         return self.name
 
@@ -81,8 +82,20 @@ class Question(models.Model):
         ('scenario', 'Scenario'),
     ]
 
-    skill = models.ForeignKey(Skill, on_delete=models.SET_NULL, null=True, blank=True,related_name="questions")
-    topic = models.ForeignKey(Topic, on_delete=models.SET_NULL, null=True, blank=True)
+    skill = models.ForeignKey(
+        Skill,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="questions"
+    )
+
+    topic = models.ForeignKey(
+        Topic,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True
+    )
 
     difficulty = models.CharField(
         max_length=10,
@@ -99,18 +112,46 @@ class Question(models.Model):
 
     question_text = models.TextField()
 
-    option_a = models.CharField(max_length=200)
-    option_b = models.CharField(max_length=200)
-    option_c = models.CharField(max_length=200)
-    option_d = models.CharField(max_length=200)
+    # ✅ Coding Solution (reference)
+    code_solution = models.TextField(blank=True, null=True)
 
-    correct_option = models.CharField(max_length=5)
+    # ✅ NEW: Sample Input/Output (for UI display)
+    sample_input = models.TextField(blank=True, null=True)
+    sample_output = models.TextField(blank=True, null=True)
+
+
+
+    # MCQ fields
+    option_a = models.CharField(max_length=200, blank=True, null=True)
+    option_b = models.CharField(max_length=200, blank=True, null=True)
+    option_c = models.CharField(max_length=200, blank=True, null=True)
+    option_d = models.CharField(max_length=200, blank=True, null=True)
+
+    correct_option = models.CharField(max_length=5, blank=True, null=True)
+
     explanation = models.TextField(blank=True)
+
     is_active = models.BooleanField(default=True)
 
     def __str__(self):
         return self.question_text[:60]
+    
+# -------------------
+# TEST CASE
+# -------------------
 
+class TestCase(models.Model):
+    question = models.ForeignKey(
+        Question,
+        on_delete=models.CASCADE,
+        related_name="test_cases"
+    )
+    input_data = models.TextField()
+    expected_output = models.TextField()
+
+    def __str__(self):
+        return f"TestCase for Question {self.question.id}"
+    
 
 # --------------------
 # TEST INSTANCE
@@ -193,10 +234,13 @@ class Answer(models.Model):
     question = models.ForeignKey(Question, on_delete=models.CASCADE)
 
     selected_option = models.CharField(max_length=5)
+    code_answer = models.TextField(blank=True, null=True)
     is_correct = models.BooleanField()
 
     skill = models.ForeignKey(Skill, on_delete=models.CASCADE)
     difficulty = models.CharField(max_length=10)
+
+    score = models.FloatField(default=0)
 
     def __str__(self):
         return f"{self.attempt} - Q{self.question.id}"

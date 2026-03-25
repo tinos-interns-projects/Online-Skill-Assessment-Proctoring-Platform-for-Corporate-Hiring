@@ -51,15 +51,44 @@ window.location.href="/candidate-dashboard/";
 
 <form method="get" action="/submit-answer/{{ test.id }}/{{ question.id }}/">
 
-<input type="radio" name="option" value="a"> {{ question.option_a }} <br><br>
-<input type="radio" name="option" value="b"> {{ question.option_b }} <br><br>
-<input type="radio" name="option" value="c"> {{ question.option_c }} <br><br>
-<input type="radio" name="option" value="d"> {{ question.option_d }} <br><br>
+{% if question.question_type == "mcq" %}
 
+    <label><input type="radio" name="option" value="a"> {{ question.option_a }}</label><br>
+    <label><input type="radio" name="option" value="b"> {{ question.option_b }}</label><br>
+    <label><input type="radio" name="option" value="c"> {{ question.option_c }}</label><br>
+    <label><input type="radio" name="option" value="d"> {{ question.option_d }}</label><br>
+
+{% elif question.question_type == "coding" %}
+
+    {% if question.sample_input %}
+    <p><b>Sample Input:</b> {{ question.sample_input }}</p>
+    <p><b>Sample Output:</b> {{ question.sample_output }}</p>
+    {% endif %}
+
+    <label>Select Language:</label>
+    <select id="language">
+        <option value="71">Python</option>
+        <option value="50">C</option>
+        <option value="80">R</option>
+    </select>
+
+    <br><br>
+
+    <textarea id="codeBox" rows="10" cols="80"
+    placeholder="Write your code here..."></textarea>
+
+    <br><br>
+
+    <button type="button" onclick="runCode()">Run Code</button>
+
+    <pre id="outputBox"></pre>
+
+{% endif %}
+
+<br><br>
 <button type="submit">Submit Answer</button>
 
 </form>
-
 
 <!-- TIMER -->
 
@@ -270,12 +299,16 @@ enterFullscreen();
 
 // ================= TAB SWITCH =================
 
-document.addEventListener("visibilitychange",function(){
+document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "hidden") {
 
-if(document.hidden){
-increaseWarning("TAB_SWITCH");
-}
-
+        // Delay to avoid false triggers
+        setTimeout(() => {
+            if (document.visibilityState === "hidden") {
+                sendActivity("TAB_SWITCH");
+            }
+        }, 2000);  // 2 seconds
+    }
 });
 
 
@@ -471,6 +504,33 @@ function captureSnapshot(){
 
 setInterval(captureSnapshot,10000); // capture every 10 seconds
 
+</script>
+
+<script>
+function runCode() {
+
+    let code = document.getElementById("codeBox").value;
+    let language = document.getElementById("language").value; 
+
+    fetch("/run-code/", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            code: code,
+            language_id: language,   
+            question_id: "{{ question.id }}",
+            user_id: "{{ request.user.id }}",
+            test_id: "{{ test.id }}"
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        document.getElementById("outputBox").innerText =
+            data.output + "\nScore: " + data.score + "%";
+    });
+}
 </script>
 
 </body>

@@ -16,6 +16,47 @@ from django.db import transaction
 from core.models import Test, Attempt, Answer, Result, TestQuestion, WebcamCapture
 from django.contrib.auth import authenticate, login
 from django.core.mail import send_mail
+from django.conf import settings
+
+
+import subprocess
+
+def run_code(user_code, input_data):
+    try:
+        process = subprocess.Popen(
+            ["python"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+
+        output, error = process.communicate(input=input_data, timeout=5)
+
+        return output.strip(), error.strip()
+
+    except Exception as e:
+        return "", str(e)
+
+
+def evaluate_code(question, user_code):
+    test_cases = question.test_cases.all()
+
+    passed = 0
+    total = test_cases.count()
+
+    for case in test_cases:
+        output, error = run_code(user_code, case.input_data)
+
+        if output.strip() == case.expected_output.strip():
+            passed += 1
+
+    score = (passed / total) * 100 if total > 0 else 0
+
+
+
+    return score, passed, total
+
 
 
 def login_view(request):
@@ -32,25 +73,40 @@ def login_view(request):
         if user is not None:
             login(request, user)
 
+            # 🔍 DEBUG (check terminal)
+            print("User:", user)
+            print("Is staff:", user.is_staff)
+            print("Is superuser:", user.is_superuser)
+            print("Has profile:", hasattr(user, "userprofile"))
+
+            if hasattr(user, "userprofile"):
+                print("Role:", user.userprofile.role)
+
+            # 🔹 Next URL (if redirected)
             if next_url:
                 return redirect(next_url)
 
-            # Admin
+            # 🔹 Admin
             if user.is_superuser or user.is_staff:
-                return redirect("admin_dashboard")
+                return redirect("/admin/")
 
-            # Role based redirect
+            # 🔹 Role-based redirect
             if hasattr(user, "userprofile"):
                 role = user.userprofile.role
 
                 if role == "employer":
                     return redirect("employer_dashboard")
 
-                if role == "candidate":
+                elif role == "candidate":
                     return redirect("candidate_dashboard")
 
+            # 🔥 Fallback (VERY IMPORTANT)
+            return redirect("/login/")
+
         else:
-            return render(request, "login.html", {"error": "Invalid username or password"})
+            return render(request, "login.html", {
+                "error": "Invalid username or password"
+            })
 
     return render(request, "login.html")
 
@@ -145,27 +201,47 @@ def assessment(request):
 
                 selected = request.POST.get(f"q{question.id}")
 
-                # Unattempted question
+                # Unattempted
                 if not selected:
                     unattempted += 1
                     continue
 
-                is_correct = selected.lower() == question.correct_option.lower()
+                # =========================
+                # MCQ QUESTIONS
+                # =========================
+                if question.question_type == "mcq":
 
-                Answer.objects.create(
-                    attempt=attempt,
-                    question=question,
-                    selected_option=selected.lower(),
-                    is_correct=is_correct,
-                    skill=question.skill,
-                    difficulty=question.difficulty,
-                )
+                    is_correct = (
+                        selected.lower() == question.correct_option.lower()
+                    )
 
-                if is_correct:
-                    score += 1
-                    correct += 1
-                else:
-                    wrong += 1
+                    Answer.objects.create(
+                        attempt=attempt,
+                        question=question,
+                        selected_option=selected.lower(),
+                        is_correct=is_correct,
+                        skill=question.skill,
+                        difficulty=question.difficulty,
+                    )
+
+                    if is_correct:
+                        score += 1
+                        correct += 1
+                    else:
+                        wrong += 1
+
+                # =========================
+                # CODING QUESTIONS
+                # =========================
+                elif question.question_type == "coding":
+
+                    Answer.objects.create(
+                        attempt=attempt,
+                        question=question,
+                        code_answer=selected,
+                        skill=question.skill,
+                        difficulty=question.difficulty,
+                    )
 
             # -------------------------
             # SAVE RESULT
@@ -187,8 +263,6 @@ def assessment(request):
             test.is_completed = True
             test.completed_at = timezone.now()
             test.save()
-
-            accuracy = (score / len(questions)) * 100
 
             return render(request, "result.html", {
                 "score": score,
@@ -586,6 +660,16 @@ from django.utils.dateparse import parse_datetime
 from datetime import datetime, timedelta
 from django.utils import timezone
 
+
+from django.shortcuts import render, redirect
+from django.contrib.auth.decorators import login_required
+from django.utils import timezone
+from datetime import datetime, timedelta
+from django.core.mail import send_mail
+from django.conf import settings
+
+import uuid
+
 @login_required
 def employer_dashboard(request):
 
@@ -597,12 +681,20 @@ def employer_dashboard(request):
 
     blueprints = TestBlueprint.objects.all()
     candidates = User.objects.filter(userprofile__role="candidate")
-
     tests = Test.objects.select_related("user", "blueprint").order_by("-scheduled_start")
 
-    message = request.session.pop("success_message", None)
+    message = None
 
+    if "success_message" in request.session:
+        message = request.session.pop("success_message")
+
+    # =================================================
+    # HANDLE TEST ASSIGNMENT
+    # =================================================
     if request.method == "POST":
+
+        # Clear any old success message
+        request.session.pop("success_message", None)
 
         blueprint_id = request.POST.get("blueprint")
         candidate_id = request.POST.get("candidate")
@@ -612,33 +704,11 @@ def employer_dashboard(request):
         blueprint = TestBlueprint.objects.get(id=blueprint_id)
         candidate = User.objects.get(id=candidate_id)
 
-        # -------------------------------------------------
-        # CHECK ACTIVE TEST (only Test table)
-        # -------------------------------------------------
-
-        existing_test = Test.objects.filter(
-            user=candidate,
-            is_completed=False
-        ).exists()
-
-        if existing_test:
-            message = "This candidate already has an active test."
-
-            return render(request, "employer_dashboard.html", {
-                "blueprints": blueprints,
-                "candidates": candidates,
-                "tests": tests,
-                "monitor_data": [],
-                "message": message
-            })
-
-        # -------------------------------------------------
+        # ------------------------------
         # SECURITY CHECK
-        # -------------------------------------------------
-
+        # ------------------------------
         if candidate.userprofile.role != "candidate":
             message = "Invalid user selected. Only candidates can be assigned tests."
-
             return render(request, "employer_dashboard.html", {
                 "blueprints": blueprints,
                 "candidates": candidates,
@@ -647,13 +717,11 @@ def employer_dashboard(request):
                 "message": message
             })
 
-        # -------------------------------------------------
+        # ------------------------------
         # VALIDATE START TIME
-        # -------------------------------------------------
-
+        # ------------------------------
         if not start_time:
             message = "Please select a start time."
-
             return render(request, "employer_dashboard.html", {
                 "blueprints": blueprints,
                 "candidates": candidates,
@@ -662,11 +730,20 @@ def employer_dashboard(request):
                 "message": message
             })
 
-        scheduled_start = timezone.make_aware(datetime.fromisoformat(start_time))
+        # ✅ FIXED TIMEZONE ISSUE
+        scheduled_start = datetime.fromisoformat(start_time)
+
+        if timezone.is_naive(scheduled_start):
+            scheduled_start = timezone.make_aware(
+                scheduled_start,
+                timezone.get_current_timezone()
+            )
+
+        print("Selected time:", scheduled_start)
+        print("Current time:", timezone.now())
 
         if scheduled_start < timezone.now():
             message = "Start time cannot be in the past."
-
             return render(request, "employer_dashboard.html", {
                 "blueprints": blueprints,
                 "candidates": candidates,
@@ -677,10 +754,9 @@ def employer_dashboard(request):
 
         scheduled_end = scheduled_start + timedelta(minutes=duration)
 
-        # -------------------------------------------------
+        # ------------------------------
         # CREATE TEST
-        # -------------------------------------------------
-
+        # ------------------------------
         test = Test.objects.create(
             blueprint=blueprint,
             user=candidate,
@@ -689,13 +765,11 @@ def employer_dashboard(request):
             duration_minutes=duration
         )
 
-        # Generate questions
         generate_test_questions(test)
 
-        # -------------------------------------------------
+        # ------------------------------
         # CREATE INVITATION LINK
-        # -------------------------------------------------
-
+        # ------------------------------
         token = uuid.uuid4().hex
 
         TestInvitation.objects.create(
@@ -706,11 +780,11 @@ def employer_dashboard(request):
 
         invitation_link = request.build_absolute_uri(f"/invite/{token}/")
 
-        # -------------------------------------------------
+        # ------------------------------
         # SEND EMAIL
-        # -------------------------------------------------
-
-        from django.core.mail import send_mail
+        # ------------------------------
+        print("EMAIL FUNCTION CALLED")
+        print("Sending email to:", candidate.email)
 
         send_mail(
             subject="Online Assessment Invitation",
@@ -727,7 +801,7 @@ Click the link below to start your test:
 Best regards,
 Assessment Platform
 """,
-            from_email=None,
+            from_email=settings.EMAIL_HOST_USER,
             recipient_list=[candidate.email],
             fail_silently=False,
         )
@@ -735,15 +809,16 @@ Assessment Platform
         request.session["success_message"] = "Test assigned successfully. Invitation link sent to candidate email."
         return redirect("employer_dashboard")
 
-    # -------------------------------------------------
-    # LIVE TEST MONITORING (ACTIVE ATTEMPTS ONLY)
-    # -------------------------------------------------
-
+    # =================================================
+    # LIVE TEST MONITORING
+    # =================================================
     monitor_data = []
 
     active_attempts = Attempt.objects.filter(
         is_completed=False
     ).select_related("test", "user")
+
+    print("Active attempts:", active_attempts.count())
 
     for attempt in active_attempts:
 
@@ -751,18 +826,15 @@ Assessment Platform
 
         status = "In Progress"
 
-        # live score
         score = Answer.objects.filter(
             attempt=attempt,
             is_correct=True
         ).count()
 
-        # warning count
         warnings = CandidateActivity.objects.filter(
             attempt=attempt
         ).count()
 
-        # calculate remaining time
         elapsed = (timezone.now() - attempt.started_at).total_seconds()
         remaining = (test.duration_minutes * 60) - elapsed
 
@@ -983,7 +1055,9 @@ def candidate_report(request, test_id):
         "unattempted": unattempted,
         "violations": violations,
         "violation_summary": violation_summary,
-        "webcam_images": webcam_images
+        "webcam_images": webcam_images,
+        "answers": answers
+        
     })
 
 
@@ -1005,3 +1079,95 @@ def save_webcam_frame(request):
         return JsonResponse({"status": "saved"})
 
     return JsonResponse({"message": "invalid request"})
+
+
+import requests
+import json
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+
+
+
+@csrf_exempt
+def run_code(request):
+
+    if request.method == "POST":
+
+        data = json.loads(request.body)
+
+        code = data.get("code", "")
+        question_id = data.get("question_id")
+        user_id = data.get("user_id")
+        test_id = data.get("test_id")   
+
+        language_id = int(data.get("language_id", 71))
+
+        from django.contrib.auth.models import User
+        from core.models import Question, Answer, Attempt
+
+        try:
+            # ✅ Get user
+            user = User.objects.get(id=user_id)
+
+            # ✅ Get question
+            question = Question.objects.get(id=question_id)
+
+            # ✅ Get correct attempt
+            attempt = Attempt.objects.get(
+                user=user,
+                test_id=test_id
+            )
+
+            test_cases = question.test_cases.all()
+
+            passed = 0
+            total = test_cases.count()
+
+            for case in test_cases:
+
+                payload = {
+                    "language_id": int(language_id),
+                    "source_code": code,
+                    "stdin": case.input_data
+                }
+
+                response = requests.post(
+                    "https://ce.judge0.com/submissions",
+                    json=payload,
+                    params={"base64_encoded": "false", "wait": "true"}
+                )
+
+                result = response.json()
+
+                output = (
+                    result.get("stdout")
+                    or result.get("stderr")
+                    or result.get("compile_output")
+                    or ""
+                ).strip()
+
+                if output == case.expected_output.strip():
+                    passed += 1
+
+            score = (passed / total) * 100 if total > 0 else 0
+
+            # ✅ Save answer
+            Answer.objects.update_or_create(
+                attempt=attempt,
+                question=question,
+                defaults={
+                    "score": score,
+                    "code_answer": code,
+                    "is_correct": score == 100,
+                    "skill": question.skill,
+                    "difficulty": question.difficulty
+                }
+            )
+
+            return JsonResponse({
+                "output": f"Passed {passed}/{total} test cases",
+                "score": score
+            })
+
+        except Exception as e:
+            return JsonResponse({"output": str(e)})

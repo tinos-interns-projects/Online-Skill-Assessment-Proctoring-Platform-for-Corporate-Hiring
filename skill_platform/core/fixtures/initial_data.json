@@ -1,0 +1,76 @@
+[
+  {"model": "core.skill", "pk": 1, "fields": {"name": "Python"}},
+  {"model": "core.skill", "pk": 2, "fields": {"name": "SQL"}},
+  {"model": "core.skill", "pk": 3, "fields": {"name": "Django"}},
+  {"model": "core.skill", "pk": 4, "fields": {"name": "HTML"}},
+  {"model": "core.skill", "pk": 5, "fields": {"name": "CSS"}},
+  {"model": "core.skill", "pk": 6, "fields": {"name": "JavaScript"}},
+  {"model": "core.skill", "pk": 7, "fields": {"name": "React"}},
+  {"model": "core.skill", "pk": 8, "fields": {"name": "Data Analysis"}},
+  {"model": "core.skill", "pk": 9, "fields": {"name": "Statistics"}},
+  {"model": "core.skill", "pk": 10, "fields": {"name": "Machine Learning"}},
+  {"model": "core.skill", "pk": 11, "fields": {"name": "Excel"}},
+  {"model": "core.skill", "pk": 12, "fields": {"name": "Manual Testing"}},
+  {"model": "core.skill", "pk": 13, "fields": {"name": "Selenium"}},
+  {"model": "core.skill", "pk": 14, "fields": {"name": "API Testing"}},
+  {"model": "core.skill", "pk": 15, "fields": {"name": "AWS"}},
+  {"model": "core.skill", "pk": 16, "fields": {"name": "Docker"}},
+  {"model": "core.skill", "pk": 17, "fields": {"name": "Linux"}},
+  {"model": "core.skill", "pk": 18, "fields": {"name": "Communication"}},
+  {"model": "core.skill", "pk": 19, "fields": {"name": "Recruitment"}},
+  {"model": "core.skill", "pk": 20, "fields": {"name": "Accounting"}},
+
+  {"model": "core.testblueprint", "pk": 1, "fields": {"name": "Python Developer", "description": ""}},
+  {"model": "core.testblueprint", "pk": 2, "fields": {"name": "Frontend Developer", "description": ""}},
+  {"model": "core.testblueprint", "pk": 3, "fields": {"name": "Full Stack Developer", "description": ""}},
+  {"model": "core.testblueprint", "pk": 4, "fields": {"name": "Backend Developer", "description": ""}},
+  {"model": "core.testblueprint", "pk": 5, "fields": {"name": "Data Analyst", "description": ""}},
+  {"model": "core.testblueprint", "pk": 6, "fields": {"name": "Data Scientist", "description": ""}},
+  {"model": "core.testblueprint", "pk": 7, "fields": {"name": "Machine Learning Engineer", "description": ""}},
+  {"model": "core.testblueprint", "pk": 8, "fields": {"name": "DevOps Engineer", "description": ""}},
+  {"model": "core.testblueprint", "pk": 9, "fields": {"name": "Cloud Engineer", "description": ""}},
+  {"model": "core.testblueprint", "pk": 10, "fields": {"name": "Software Tester", "description": ""}},
+  {"model": "core.testblueprint", "pk": 11, "fields": {"name": "QA Engineer", "description": ""}},
+  {"model": "core.testblueprint", "pk": 12, "fields": {"name": "Business Analyst", "description": ""}},
+  {"model": "core.testblueprint", "pk": 13, "fields": {"name": "HR Executive", "description": ""}},
+  {"model": "core.testblueprint", "pk": 14, "fields": {"name": "Recruiter", "description": ""}},
+  {"model": "core.testblueprint", "pk": 15, "fields": {"name": "Accountant", "description": ""}},
+  {"model": "core.testblueprint", "pk": 16, "fields": {"name": "Financial Analyst", "description": ""}},
+  {"model": "core.testblueprint", "pk": 17, "fields": {"name": "UI Designer", "description": ""}},
+  {"model": "core.testblueprint", "pk": 18, "fields": {"name": "UX Designer", "description": ""}},
+  {"model": "core.testblueprint", "pk": 19, "fields": {"name": "Product Manager", "description": ""}},
+  {"model": "core.testblueprint", "pk": 20, "fields": {"name": "Project Manager", "description": ""}},
+
+  {"model": "core.blueprintrule", "pk": 1, "fields": {"blueprint": 1, "skill": 1, "difficulty": "easy", "number_of_questions": 3, "topic": null}},
+  {"model": "core.blueprintrule", "pk": 2, "fields": {"blueprint": 1, "skill": 2, "difficulty": "medium", "number_of_questions": 2, "topic": null}},
+
+  {"model": "core.blueprintrule", "pk": 3, "fields": {"blueprint": 2, "skill": 4, "difficulty": "easy", "number_of_questions": 3, "topic": null}},
+  {"model": "core.blueprintrule", "pk": 4, "fields": {"blueprint": 2, "skill": 6, "difficulty": "medium", "number_of_questions": 2, "topic": null}},
+
+  {"model": "core.blueprintrule", "pk": 5, "fields": {"blueprint": 3, "skill": 1, "difficulty": "easy", "number_of_questions": 2, "topic": null}},
+  {"model": "core.blueprintrule", "pk": 6, "fields": {"blueprint": 3, "skill": 6, "difficulty": "medium", "number_of_questions": 2, "topic": null}},
+
+  {"model": "core.blueprintrule", "pk": 7, "fields": {"blueprint": 4, "skill": 3, "difficulty": "easy", "number_of_questions": 3, "topic": null}},
+
+  {"model": "core.blueprintrule", "pk": 8, "fields": {"blueprint": 5, "skill": 8, "difficulty": "easy", "number_of_questions": 3, "topic": null}},
+  {"model": "core.blueprintrule", "pk": 9, "fields": {"blueprint": 5, "skill": 11, "difficulty": "medium", "number_of_questions": 2, "topic": null}},
+
+  {"model": "core.blueprintrule", "pk": 10, "fields": {"blueprint": 6, "skill": 10, "difficulty": "medium", "number_of_questions": 3, "topic": null}},
+
+  {"model": "core.blueprintrule", "pk": 11, "fields": {"blueprint": 7, "skill": 10, "difficulty": "hard", "number_of_questions": 2, "topic": null}},
+
+  {"model": "core.blueprintrule", "pk": 12, "fields": {"blueprint": 8, "skill": 15, "difficulty": "easy", "number_of_questions": 2, "topic": null}},
+  {"model": "core.blueprintrule", "pk": 13, "fields": {"blueprint": 8, "skill": 16, "difficulty": "medium", "number_of_questions": 2, "topic": null}},
+
+  {"model": "core.blueprintrule", "pk": 14, "fields": {"blueprint": 9, "skill": 15, "difficulty": "medium", "number_of_questions": 3, "topic": null}},
+
+  {"model": "core.blueprintrule", "pk": 15, "fields": {"blueprint": 10, "skill": 12, "difficulty": "easy", "number_of_questions": 3, "topic": null}},
+  {"model": "core.blueprintrule", "pk": 16, "fields": {"blueprint": 10, "skill": 13, "difficulty": "medium", "number_of_questions": 2, "topic": null}},
+
+  {"model": "core.blueprintrule", "pk": 17, "fields": {"blueprint": 12, "skill": 8, "difficulty": "easy", "number_of_questions": 2, "topic": null}},
+
+  {"model": "core.blueprintrule", "pk": 18, "fields": {"blueprint": 13, "skill": 18, "difficulty": "easy", "number_of_questions": 3, "topic": null}},
+  {"model": "core.blueprintrule", "pk": 19, "fields": {"blueprint": 14, "skill": 19, "difficulty": "easy", "number_of_questions": 3, "topic": null}},
+
+  {"model": "core.blueprintrule", "pk": 20, "fields": {"blueprint": 15, "skill": 20, "difficulty": "medium", "number_of_questions": 3, "topic": null}}
+]

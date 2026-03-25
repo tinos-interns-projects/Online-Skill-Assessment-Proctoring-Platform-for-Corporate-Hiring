@@ -3,14 +3,14 @@
 <p>Welcome {{ request.user.username }}</p>
 
 <a href="{% url 'employer_results' %}">
-<button>View Candidate Results</button>
+    <button>View Candidate Results</button>
 </a>
 
 <br><br>
 
 {% if message %}
 <p id="successMessage" style="color:green;font-weight:bold;">
-{{ message }}
+    {{ message }}
 </p>
 {% endif %}
 
@@ -18,43 +18,42 @@
 
 <h2>Create Assessment</h2>
 
-<form method="POST">
-{% csrf_token %}
+<form method="POST" action="" id="assignForm">
+    {% csrf_token %}
 
-<label>Select Blueprint</label><br>
-<select name="blueprint">
-{% for blueprint in blueprints %}
-<option value="{{ blueprint.id }}">
-{{ blueprint.name }}
-</option>
-{% endfor %}
-</select>
+    <label>Select Blueprint</label><br>
+    <select name="blueprint" required>
+        {% for blueprint in blueprints %}
+        <option value="{{ blueprint.id }}">
+            {{ blueprint.name }}
+        </option>
+        {% endfor %}
+    </select>
 
-<br><br>
+    <br><br>
 
-<label>Select Candidate</label><br>
-<select name="candidate">
-{% for candidate in candidates %}
-<option value="{{ candidate.id }}">
-{{ candidate.username }}
-</option>
-{% endfor %}
-</select>
+    <label>Select Candidate</label><br>
+    <select name="candidate" required>
+        {% for candidate in candidates %}
+        <option value="{{ candidate.id }}">
+            {{ candidate.username }}
+        </option>
+        {% endfor %}
+    </select>
 
-<br><br>
+    <br><br>
 
-<label>Test Start Time</label><br>
-<input type="datetime-local" name="start_time">
+    <label>Test Start Time</label><br>
+    <input type="datetime-local" name="start_time" required>
 
-<br><br>
+    <br><br>
 
-<label>Duration (minutes)</label><br>
-<input type="number" name="duration" value="60">
+    <label>Duration (minutes)</label><br>
+    <input type="number" name="duration" value="60" min="1" required>
 
-<br><br>
+    <br><br>
 
-<button type="submit">Assign Test</button>
-
+    <button type="submit">Assign Test</button>
 </form>
 
 <hr>
@@ -62,43 +61,41 @@
 <h2>Assigned Tests</h2>
 
 <table border="1" cellpadding="8">
-
 <tr>
-<th>Candidate</th>
-<th>Blueprint</th>
-<th>Status</th>
-<th>Assigned At</th>
-<th>Action</th>
+    <th>Candidate</th>
+    <th>Blueprint</th>
+    <th>Status</th>
+    <th>Assigned At</th>
+    <th>Action</th>
 </tr>
 
 {% for test in tests %}
-
 <tr>
-<td>{{ test.user.username }}</td>
-<td>{{ test.blueprint.name }}</td>
+    <td>{{ test.user.username }}</td>
+    <td>{{ test.blueprint.name }}</td>
 
-<td>
-{% if test.is_completed %}
-Completed
-{% else %}
-Pending
-{% endif %}
-</td>
+    <td>
+        {% if test.is_completed %}
+            Completed
+        {% else %}
+            Pending
+        {% endif %}
+    </td>
 
-<td>{{ test.started_at }}</td>
+    <td>{{ test.started_at }}</td>
 
-<td>
-{% if test.is_completed %}
-<a href="{% url 'candidate_report' test.id %}">
-View Report
-</a>
-{% else %}
--
-{% endif %}
-</td>
-
+    <td>
+        {% if test.is_completed %}
+            <a href="{% url 'candidate_report' test.id %}">View Report</a>
+        {% else %}
+            -
+        {% endif %}
+    </td>
 </tr>
-
+{% empty %}
+<tr>
+    <td colspan="5">No tests assigned yet</td>
+</tr>
 {% endfor %}
 
 </table>
@@ -108,45 +105,47 @@ View Report
 <h2>Live Test Monitoring</h2>
 
 <table border="1" cellpadding="8">
-
 <tr>
-<th>Candidate</th>
-<th>Test</th>
-<th>Status</th>
-<th>Score</th>
-<th>Warnings</th>
-<th>Time Left</th>
+    <th>Candidate</th>
+    <th>Test</th>
+    <th>Status</th>
+    <th>Score</th>
+    <th>Warnings</th>
+    <th>Time Left</th>
 </tr>
 
 {% for item in monitor_data %}
-
 <tr>
-<td>{{ item.candidate }}</td>
-<td>{{ item.test }}</td>
-<td>{{ item.status }}</td>
-<td>{{ item.score }}</td>
-<td>{{ item.warnings }}</td>
-<td>{{ item.time_left }}</td>
+    <td>{{ item.candidate }}</td>
+    <td>{{ item.test }}</td>
+    <td>{{ item.status }}</td>
+    <td>{{ item.score }}</td>
+    <td>{{ item.warnings }}</td>
+    <td>{{ item.time_left }}</td>
 </tr>
-
+{% empty %}
+<tr>
+    <td colspan="6">No active tests</td>
+</tr>
 {% endfor %}
-
 </table>
 
 <script>
+// Prevent auto-refresh while filling form
+let form = document.getElementById("assignForm");
+let isSubmitting = false;
+
+form.addEventListener("submit", function(){
+    isSubmitting = true;
+});
 
 // Auto refresh monitoring every 5 seconds
 setInterval(function(){
+    let activeElement = document.activeElement;
 
-let activeElement = document.activeElement;
+    if (!isSubmitting && activeElement.tagName !== "INPUT" && activeElement.tagName !== "SELECT") {
+        location.reload();
+    }
 
-if(activeElement.tagName !== "INPUT" && activeElement.tagName !== "SELECT"){
-
-location.reload();
-
-}
-
-},5000);
-
+}, 5000);
 </script>
-

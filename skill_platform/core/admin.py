@@ -12,6 +12,7 @@ from .models import (
     Skill,
     Topic,
     Question,
+    TestCase,
     TestBlueprint,
     BlueprintRule,
     Test,
@@ -36,10 +37,13 @@ class TopicAdmin(admin.ModelAdmin):
 
 @admin.register(Question)
 class QuestionAdmin(admin.ModelAdmin):
-    list_display = ('question_text', 'skill', 'topic', 'difficulty')
-    list_filter = ('skill', 'difficulty')
+    list_display = ('question_text', 'question_type' , 'skill', 'topic', 'difficulty')
+    list_filter = ('question_type' , 'skill', 'difficulty')
     search_fields = ('question_text',)
 
+@admin.register(TestCase)
+class TestCaseAdmin(admin.ModelAdmin):
+    list_display = ("question", "input_data", "expected_output")
 
 @admin.register(Result)
 class ResultAdmin(admin.ModelAdmin):

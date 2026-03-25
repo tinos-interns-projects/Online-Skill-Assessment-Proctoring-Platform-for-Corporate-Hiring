@@ -14,6 +14,52 @@
 
 <hr>
 
+<h2>Question-wise Performance</h2>
+
+<table border="1" cellpadding="8">
+<tr>
+    <th>Question</th>
+    <th>Your Answer</th>
+    <th>Score</th>
+</tr>
+
+{% for answer in answers %}
+<tr>
+    <td>{{ answer.question.question_text }}</td>
+
+    <td>
+        {% if answer.question.question_type == "coding" %}
+            <pre>{{ answer.answer_text }}</pre>
+        {% else %}
+            {{ answer.selected_option }}
+        {% endif %}
+    </td>
+
+    <!-- ✅ ONLY THIS SCORE COLUMN -->
+    <td>
+        {% if answer.question.question_type == "mcq" %}
+            {% if answer.is_correct %}
+                100%
+            {% else %}
+                0%
+            {% endif %}
+        {% else %}
+            {{ answer.score }}%
+        {% endif %}
+    </td>
+
+</tr>
+{% empty %}
+<tr>
+    <td colspan="3">No answers found</td>
+</tr>
+{% endfor %}
+
+</table>
+
+<hr>
+
+
 <h2>Proctoring Violations</h2>
 
 <p><strong>Total Violations:</strong> {{ violations|length }}</p>
@@ -35,6 +81,7 @@
 {% endif %}
 
 <hr>
+
 
 <h2>Webcam Monitoring Evidence</h2>
 

@@ -29,6 +29,9 @@
 <strong>{{ forloop.counter }}. {{ question.question_text }}</strong>
 </p>
 
+<!-- ================= MCQ ================= -->
+{% if question.question_type == "mcq" %}
+
 <label>
 <input type="radio" name="q{{ question.id }}" value="a">
 {{ question.option_a }}
@@ -52,6 +55,18 @@
 {{ question.option_d }}
 </label>
 <br>
+
+<!-- ================= CODING ================= -->
+{% elif question.question_type == "coding" %}
+
+<textarea 
+name="q{{ question.id }}" 
+rows="8" 
+cols="80"
+placeholder="Write your code here..."
+></textarea>
+
+{% endif %}
 
 <hr>
 
@@ -110,7 +125,7 @@ window.onload = startTimer;
 
 
 
-<!-- ================= REAL TIME PROCTORING ================= -->
+<!-- ================= PROCTORING ================= -->
 
 <script>
 
@@ -118,98 +133,64 @@ let maxWarnings = 3;
 let inactivityTime = 0;
 let examTerminated = false;
 
-// ===== MULTIPLE TAB DETECTION =====
-
+// MULTIPLE TAB
 if(localStorage.getItem("exam_active")){
-
 increaseWarning("MULTIPLE_TAB_DETECTED");
-
 }else{
-
 localStorage.setItem("exam_active","true");
-
 }
 
-// ===== FORCE FULLSCREEN =====
-
+// FULLSCREEN
 function enterFullscreen(){
-
 let elem = document.documentElement;
-
 if(elem.requestFullscreen){
 elem.requestFullscreen();
 }
-
 }
 
 window.onload = function(){
-
 enterFullscreen();
-
 };
 
-// ===== LOAD EXISTING WARNINGS =====
-
+// WARNING COUNT
 let warningCount = sessionStorage.getItem("warningCount");
-
 if(!warningCount){
 warningCount = 0;
 }else{
 warningCount = parseInt(warningCount);
 }
 
-
-// ===== SEND ALERT TO BACKEND =====
-
+// SEND TO BACKEND
 function sendActivity(type){
-
 fetch("/log-activity/",{
-
 method:"POST",
-
-headers:{
-"Content-Type":"application/json"
-},
-
+headers:{"Content-Type":"application/json"},
 body:JSON.stringify({
 attempt_id:"{{ attempt.id }}",
 activity_type:type
 })
-
 });
-
 }
 
-
-
-// ===== HANDLE WARNING =====
-
+// HANDLE WARNING
 function increaseWarning(activity){
 
-// stop if exam already ended
 if(examTerminated) return;
 
 warningCount++;
-
 sessionStorage.setItem("warningCount", warningCount);
 
 alert("Warning " + warningCount + "/" + maxWarnings + ": " + activity);
 
 sendActivity(activity);
 
-// if warning limit reached
 if(warningCount >= maxWarnings){
 
-examTerminated = true;   // lock system immediately
+examTerminated = true;
 sessionStorage.removeItem("warningCount");
 
 alert("Maximum warnings reached. Test will be submitted.");
 
-// stop further script execution
-document.removeEventListener("visibilitychange", ()=>{});
-window.removeEventListener("blur", ()=>{});
-
-// submit exam or redirect
 let examForm = document.getElementById("examForm");
 
 if(examForm){
@@ -219,267 +200,110 @@ window.location.replace("/finish-test/{{ attempt.id }}/");
 }
 
 }
-
 }
 
-
-
-// ===== TAB SWITCH =====
-
+// TAB SWITCH
 document.addEventListener("visibilitychange",function(){
-
 if(examTerminated) return;
-
 if(document.hidden){
-
 increaseWarning("TAB_SWITCH");
-
 }
-
 });
 
-
-
-// ===== WINDOW BLUR =====
-
+// WINDOW BLUR
 window.addEventListener("blur",function(){
-
 if(examTerminated) return;
-
 increaseWarning("WINDOW_BLUR");
-
 });
 
-
-
-// ===== FULLSCREEN EXIT =====
-
+// FULLSCREEN EXIT
 document.addEventListener("fullscreenchange",function(){
-
 if(examTerminated) return;
-
 if(!document.fullscreenElement){
-
 increaseWarning("FULLSCREEN_EXIT");
-
 setTimeout(function(){
-
 enterFullscreen();
-
 },1000);
-
 }
-
 });
 
-
-
-// ===== BLOCK PAGE REFRESH =====
-
+// BLOCK REFRESH
 document.addEventListener("keydown",function(event){
-
 if(examTerminated) return;
 
 if(event.key==="F5"){
-
 event.preventDefault();
-
 increaseWarning("PAGE_REFRESH");
-
 }
 
 if(event.ctrlKey && event.key==="r"){
-
 event.preventDefault();
-
 increaseWarning("PAGE_REFRESH");
-
 }
-
 });
 
-
-
-// ===== PAGE CLOSE / RELOAD =====
-
+// PAGE CLOSE
 window.addEventListener("beforeunload",function(){
-
 localStorage.removeItem("exam_active");
-
 if(examTerminated) return;
-
 sendActivity("PAGE_REFRESH");
-
 });
 
-
-// ===== INACTIVITY DETECTION =====
-
+// INACTIVITY
 setInterval(function(){
-
 if(examTerminated) return;
 
 inactivityTime++;
 
 if(inactivityTime > 30){
-
 increaseWarning("INACTIVE");
-
 inactivityTime = 0;
-
 }
-
 },1000);
-
 
 document.addEventListener("mousemove", resetTimer);
 document.addEventListener("keypress", resetTimer);
 
 function resetTimer(){
-
 inactivityTime = 0;
-
 }
 
-
-
-// ===== DEVTOOLS DETECTION =====
-
+// DEVTOOLS
 setInterval(function(){
-
 if(examTerminated) return;
 
 let threshold = 160;
 
 if(window.outerWidth - window.innerWidth > threshold ||
    window.outerHeight - window.innerHeight > threshold){
-
 increaseWarning("DEVTOOLS_OPEN");
-
 }
-
 },2000);
 
-// ===== DISABLE RIGHT CLICK =====
-
+// RIGHT CLICK
 document.addEventListener("contextmenu", function(event){
-
 event.preventDefault();
-
 increaseWarning("RIGHT_CLICK_BLOCKED");
-
 });
 
-
-
-// ===== DISABLE COPY =====
-
+// COPY
 document.addEventListener("copy", function(event){
-
 event.preventDefault();
-
 increaseWarning("COPY_ATTEMPT");
-
 });
 
-
-
-// ===== DISABLE PASTE =====
-
+// PASTE
 document.addEventListener("paste", function(event){
-
 event.preventDefault();
-
 increaseWarning("PASTE_ATTEMPT");
-
 });
 
-
-
-// ===== DISABLE TEXT SELECTION =====
-
+// SELECT
 document.addEventListener("selectstart", function(event){
-
 event.preventDefault();
-
 });
 
 </script>
-
-
-</body>
-</html>
-
-
-
-// ===== BLOCK PAGE REFRESH =====
-
-document.addEventListener("keydown",function(event){
-
-if(examTerminated) return;
-
-if(event.key==="F5"){
-
-event.preventDefault();
-
-increaseWarning("PAGE_REFRESH");
-
-}
-
-if(event.ctrlKey && event.key==="r"){
-
-event.preventDefault();
-
-increaseWarning("PAGE_REFRESH");
-
-}
-
-});
-
-
-
-// ===== PAGE CLOSE / RELOAD DETECTION =====
-
-window.addEventListener("beforeunload",function(){
-
-if(examTerminated) return;
-
-sendActivity("PAGE_REFRESH");
-
-});
-
-
-
-// ===== INACTIVITY MONITOR =====
-
-setInterval(function(){
-
-if(examTerminated) return;
-
-inactivityTime++;
-
-if(inactivityTime > 30){
-
-increaseWarning("INACTIVE");
-
-inactivityTime = 0;
-
-}
-
-},1000);
-
-
-document.addEventListener("mousemove", resetTimer);
-document.addEventListener("keypress", resetTimer);
-
-function resetTimer(){
-
-inactivityTime = 0;
-
-}
-
-</script>
-
 
 </body>
 </html>
