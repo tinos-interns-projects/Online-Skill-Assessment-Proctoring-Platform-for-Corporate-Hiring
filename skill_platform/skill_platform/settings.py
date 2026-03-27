@@ -25,7 +25,7 @@ SECRET_KEY = 'django-insecure-8w^s&)qmugr$an42=!&e_)73r8$bf^t6+d%mx03k0i%vjwee&8
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["127.0.0.1", "localhost", "testserver"]
 
 
 # Application definition
@@ -135,9 +135,6 @@ LOGOUT_REDIRECT_URL = '/login/'
 # CSRF settings
 CSRF_COOKIE_SECURE = False
 CSRF_TRUSTED_ORIGINS = ["http://127.0.0.1:8000"]
-# <<<<<<< HEAD
-CORS_ALLOW_ALL_ORIGINS = True
-# =======
 
 
 # Email configuration (for development)
@@ -154,4 +151,6 @@ DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 # Media file configuration (for uploaded files like webcam images)
 MEDIA_URL = "/media/"
 MEDIA_ROOT = os.path.join(BASE_DIR, "media")
+
+
 

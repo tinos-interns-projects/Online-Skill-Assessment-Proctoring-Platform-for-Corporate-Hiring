@@ -306,16 +306,187 @@ from .services.analytics import (
     difficulty_wise_performance
 )
 from .models import Result
+from .serializers import AssessmentSerializer, CandidateSerializer, ResultSerializer
 
 
 @api_view(['GET'])
 @permission_classes([AllowAny]) 
 def analytics_api(request):
+    skill_wise = skill_wise_performance()
+    top_results = Result.objects.select_related("user").order_by("-accuracy", "-created_at")[:5]
+    recent_results = Result.objects.order_by("created_at")[:7]
+
     return Response({
         "total_attempts": Result.objects.count(),
-        "skill_wise": skill_wise_performance(),
+        "skill_wise": skill_wise,
         "difficulty_wise": difficulty_wise_performance(),
+        "rankings": [
+            {"name": result.user.username, "score": round(result.accuracy, 2)}
+            for result in top_results
+        ],
+        "sectionScores": [
+            {"section": item["skill"], "avgScore": item["avg_score"]}
+            for item in skill_wise
+        ],
+        "trend": [
+            {"week": result.created_at.strftime("%b %d"), "avg": round(result.accuracy, 2)}
+            for result in recent_results
+        ],
     })
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def employer_stats_api(request):
+    from django.contrib.auth.models import User
+    from django.db.models import Avg
+
+    assessment_count = TestBlueprint.objects.count()
+    candidate_count = User.objects.filter(userprofile__role="candidate").count()
+    live_tests = Attempt.objects.filter(is_completed=False).count()
+    average_accuracy = Result.objects.aggregate(avg=Avg("accuracy"))["avg"] or 0
+
+    live_monitoring = []
+    active_attempts = Attempt.objects.filter(is_completed=False).select_related("test__blueprint", "user")
+
+    for attempt in active_attempts:
+        test = attempt.test
+        warnings = CandidateActivity.objects.filter(attempt=attempt).count()
+        score = Answer.objects.filter(attempt=attempt, is_correct=True).count()
+
+        if test.scheduled_end:
+            remaining = (test.scheduled_end - timezone.now()).total_seconds()
+            if remaining > 0:
+                minutes = int(remaining // 60)
+                seconds = int(remaining % 60)
+                time_left = f"{minutes}m {seconds:02d}s"
+            else:
+                time_left = "Expired"
+        else:
+            time_left = "N/A"
+
+        live_monitoring.append({
+            "candidate": attempt.user.get_full_name() or attempt.user.username,
+            "test": test.blueprint.name,
+            "status": "In Progress",
+            "score": score,
+            "warnings": warnings,
+            "timeLeft": time_left,
+        })
+
+    return Response({
+        "stats": [
+            {"label": "Assessments Created", "value": assessment_count},
+            {"label": "Candidates Assigned", "value": candidate_count},
+            {"label": "Live Tests", "value": live_tests},
+            {"label": "Avg Score", "value": f"{round(average_accuracy)}%"},
+        ],
+        "liveMonitoring": live_monitoring,
+    })
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def candidates_api(request):
+    from django.contrib.auth.models import User
+
+    users = User.objects.filter(userprofile__role="candidate").order_by("username")
+    payload = []
+
+    for user in users:
+        latest_result = Result.objects.filter(user=user).order_by("-created_at").first()
+        payload.append({
+            "id": user.id,
+            "name": user.get_full_name() or user.username,
+            "email": user.email or "",
+            "stage": "Completed" if latest_result else "Assigned",
+            "role": "Candidate",
+            "company": "",
+            "status": "Completed" if latest_result else "Active",
+        })
+
+    return Response(CandidateSerializer(payload, many=True).data)
+
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def employers_api(request):
+    from django.contrib.auth.models import User
+
+    users = User.objects.filter(userprofile__role="employer").order_by("username")
+    payload = [
+        {
+            "id": user.id,
+            "name": user.get_full_name() or user.username,
+            "email": user.email or "",
+            "stage": "Hiring",
+            "role": "Employer",
+            "company": user.get_full_name() or user.username,
+            "status": "Active",
+        }
+        for user in users
+    ]
+
+    return Response(CandidateSerializer(payload, many=True).data)
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def results_api(request):
+    queryset = Result.objects.select_related("user", "test__blueprint", "attempt").order_by("-created_at")
+    return Response(ResultSerializer(queryset, many=True).data)
+
+
+@api_view(["GET", "POST"])
+@permission_classes([AllowAny])
+def assessments_api(request):
+    from .models import Skill
+
+    if request.method == "GET":
+        queryset = TestBlueprint.objects.prefetch_related("rules__skill", "questions").order_by("name")
+        return Response(AssessmentSerializer(queryset, many=True).data)
+
+    payload = request.data
+    title = payload.get("title")
+    skill_name = str(payload.get("skill") or "").strip()
+    difficulty = payload.get("difficulty") or "Medium"
+    duration_minutes = int(payload.get("durationMinutes") or 45)
+    questions_payload = payload.get("questions") or []
+
+    if not title:
+        return Response({"detail": "Assessment title is required."}, status=400)
+
+    blueprint = TestBlueprint.objects.create(
+        name=title,
+        primary_skill=skill_name,
+        duration_minutes=duration_minutes,
+        difficulty=difficulty,
+        question_count=len(questions_payload),
+        description=payload.get("description", ""),
+    )
+
+    skill_obj = None
+    if skill_name:
+        skill_obj, _ = Skill.objects.get_or_create(name=skill_name)
+
+    option_map = ["a", "b", "c", "d"]
+
+    for item in questions_payload:
+        options = item.get("options") or []
+        correct_index = int(item.get("correctOption", 0))
+
+        Question.objects.create(
+            blueprint=blueprint,
+            skill=skill_obj,
+            difficulty=str(item.get("difficulty") or difficulty).lower(),
+            question_text=item.get("question", ""),
+            option_a=options[0] if len(options) > 0 else "",
+            option_b=options[1] if len(options) > 1 else "",
+            option_c=options[2] if len(options) > 2 else "",
+            option_d=options[3] if len(options) > 3 else "",
+            correct_option=option_map[correct_index] if 0 <= correct_index < len(option_map) else "a",
+        )
+
+    return Response(AssessmentSerializer(blueprint).data, status=201)
 
 from django.shortcuts import get_object_or_404
 from django.http import JsonResponse
@@ -1171,3 +1342,5 @@ def run_code(request):
 
         except Exception as e:
             return JsonResponse({"output": str(e)})
+
+

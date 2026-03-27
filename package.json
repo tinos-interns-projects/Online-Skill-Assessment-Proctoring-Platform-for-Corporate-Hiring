@@ -1,0 +1,20 @@
+{
+  "name": "online-skill-assessment-proctoring-platform-for-corporate-hiring",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Online Skill Assessment Platform",
+  "main": "index.js",
+  "scripts": {
+    "dev": "concurrently \"cd skill_platform && python manage.py runserver\" \"cd frontend && npm run dev\"",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tinos-interns-projects/Online-Skill-Assessment-Proctoring-Platform-for-Corporate-Hiring.git"
+  },
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

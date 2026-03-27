@@ -29,6 +29,10 @@ class Topic(models.Model):
 class TestBlueprint(models.Model):
     name = models.CharField(max_length=200)
     description = models.TextField(blank=True)
+    primary_skill = models.CharField(max_length=100, blank=True)
+    duration_minutes = models.PositiveIntegerField(default=45)
+    difficulty = models.CharField(max_length=20, default="Medium", blank=True)
+    question_count = models.PositiveIntegerField(default=0)
 
 
     def __str__(self):
@@ -69,6 +73,14 @@ class BlueprintRule(models.Model):
 # --------------------
 
 class Question(models.Model):
+    blueprint = models.ForeignKey(
+        TestBlueprint,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="questions"
+    )
+
     DIFFICULTY_CHOICES = [
         ('easy', 'Easy'),
         ('medium', 'Medium'),
@@ -304,4 +316,6 @@ class WebcamCapture(models.Model):
     def __str__(self):
         return f"{self.attempt.user.username} - Webcam Frame - {self.timestamp}"
     
+
+
 
