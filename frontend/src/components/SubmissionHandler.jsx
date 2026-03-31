@@ -30,7 +30,7 @@ function buildSubmissionResult(questions, answers, metadata = {}) {
   };
 }
 
-function SubmissionHandler({ questions, answers, onSubmit, disabled, metadata }) {
+function SubmissionHandler({ questions, answers, onSubmit, disabled, metadata, label = "Submit Test" }) {
   const attemptedQuestions = questions.reduce((count, question) => count + (isAnswered(question, answers[question.id]) ? 1 : 0), 0);
 
   const handleSubmit = () => {
@@ -45,7 +45,7 @@ function SubmissionHandler({ questions, answers, onSubmit, disabled, metadata })
       onClick={handleSubmit}
       className="rounded-full bg-emerald-500 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-emerald-500/25 transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
     >
-      Submit Test ({attemptedQuestions}/{questions.length})
+      {label} ({attemptedQuestions}/{questions.length})
     </button>
   );
 }

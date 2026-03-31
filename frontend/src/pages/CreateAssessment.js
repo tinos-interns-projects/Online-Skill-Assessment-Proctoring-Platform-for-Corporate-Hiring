@@ -6,7 +6,8 @@ const defaultQuestion = {
   options: ["", "", "", ""],
   correctOption: "0",
   difficulty: "Medium",
-  skill: ""
+  skill: "",
+  sectionType: "logical"
 };
 
 function CreateAssessment() {
@@ -151,6 +152,16 @@ function CreateAssessment() {
                 onChange={(event) => setQuestion((prev) => ({ ...prev, skill: event.target.value }))}
                 className="rounded-lg border border-slate-300 px-3 py-2 outline-none ring-brand-500 focus:ring"
               />
+              <select
+                value={question.sectionType}
+                onChange={(event) => setQuestion((prev) => ({ ...prev, sectionType: event.target.value }))}
+                className="rounded-lg border border-slate-300 px-3 py-2 outline-none ring-brand-500 focus:ring"
+              >
+                <option value="verbal">Verbal</option>
+                <option value="numerical">Numerical</option>
+                <option value="logical">Logical</option>
+                <option value="coding">Coding</option>
+              </select>
             </div>
 
             <button

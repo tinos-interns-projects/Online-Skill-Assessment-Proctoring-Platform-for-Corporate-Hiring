@@ -10,7 +10,6 @@
 
 <body>
 
-
 <div style="
 background:#ffe6e6;
 border:1px solid red;
@@ -23,65 +22,62 @@ color:#b30000;
 Suspicious activity may result in automatic submission.
 </div>
 
-<!-- Webcam preview shown to candidate -->
-<video id="webcam" width="300" height="200" autoplay muted></video>
+<!-- Webcam runs in background (HIDDEN) -->
+<video id="webcam" autoplay muted 
+style="position:absolute; width:320px; height:240px; opacity:0; z-index:-1;"></video>
 
 <h3>Time Remaining: <span id="timer"></span></h3>
 
+<!-- CAMERA PERMISSION -->
 <script>
+sessionStorage.setItem("warningCount", "0");
 
-// Require webcam permission before exam starts
 navigator.mediaDevices.getUserMedia({video:true})
 .then(function(stream){
-
-console.log("Camera permission granted");
-
+    console.log("Camera permission granted");
 })
 .catch(function(){
-
-alert("Camera permission is required to start the exam.");
-
-window.location.href="/candidate-dashboard/";
-
+    alert("Camera permission is required to start the exam.");
+    window.location.href="/candidate-dashboard/";
 });
-
 </script>
 
 <h2>{{ question.question_text }}</h2>
 
-<form method="get" action="/submit-answer/{{ test.id }}/{{ question.id }}/">
+<form method="post" action="/submit-answer/{{ test.id }}/{{ question.id }}/">
+{% csrf_token %}
 
 {% if question.question_type == "mcq" %}
 
-    <label><input type="radio" name="option" value="a"> {{ question.option_a }}</label><br>
-    <label><input type="radio" name="option" value="b"> {{ question.option_b }}</label><br>
-    <label><input type="radio" name="option" value="c"> {{ question.option_c }}</label><br>
-    <label><input type="radio" name="option" value="d"> {{ question.option_d }}</label><br>
+<label><input type="radio" name="option" value="a"> {{ question.option_a }}</label><br>
+<label><input type="radio" name="option" value="b"> {{ question.option_b }}</label><br>
+<label><input type="radio" name="option" value="c"> {{ question.option_c }}</label><br>
+<label><input type="radio" name="option" value="d"> {{ question.option_d }}</label><br>
 
 {% elif question.question_type == "coding" %}
 
-    {% if question.sample_input %}
-    <p><b>Sample Input:</b> {{ question.sample_input }}</p>
-    <p><b>Sample Output:</b> {{ question.sample_output }}</p>
-    {% endif %}
+{% if question.sample_input %}
+<p><b>Sample Input:</b> {{ question.sample_input }}</p>
+<p><b>Sample Output:</b> {{ question.sample_output }}</p>
+{% endif %}
 
-    <label>Select Language:</label>
-    <select id="language">
-        <option value="71">Python</option>
-        <option value="50">C</option>
-        <option value="80">R</option>
-    </select>
+<label>Select Language:</label>
+<select id="language">
+<option value="71">Python</option>
+<option value="50">C</option>
+<option value="80">R</option>
+</select>
 
-    <br><br>
+<br><br>
 
-    <textarea id="codeBox" rows="10" cols="80"
-    placeholder="Write your code here..."></textarea>
+<textarea id="codeBox" name="code" rows="10" cols="80"
+placeholder="Write your code here..."></textarea>
 
-    <br><br>
+<br><br>
 
-    <button type="button" onclick="runCode()">Run Code</button>
+<button type="button" onclick="runCode()">Run Code</button>
 
-    <pre id="outputBox"></pre>
+<pre id="outputBox"></pre>
 
 {% endif %}
 
@@ -91,15 +87,12 @@ window.location.href="/candidate-dashboard/";
 </form>
 
 <!-- TIMER -->
-
 <script>
-
 let duration = Number("{{ duration|default:60 }}") * 60;
 let startTime = Number("{{ start_time }}");
 
 let now = Math.floor(Date.now()/1000);
 let elapsed = Math.floor(now - startTime);
-
 let remaining = duration - elapsed;
 
 let display = document.getElementById("timer");
@@ -107,15 +100,10 @@ let display = document.getElementById("timer");
 let countdown = setInterval(function(){
 
 if(remaining <= 0){
-
 clearInterval(countdown);
-
 alert("Time is up! Submitting test.");
-
 window.location.href="/finish-test/{{ test.id }}/";
-
 return;
-
 }
 
 let minutes = Math.floor(remaining/60);
@@ -127,76 +115,66 @@ minutes + ":" + (seconds < 10 ? "0" : "") + seconds;
 remaining--;
 
 },1000);
-
 </script>
 
-
-
 <!-- PROCTORING SYSTEM -->
-
 <script>
 
 console.log("Proctoring system active");
 
 let maxWarnings = 3;
 let inactivityTime = 0;
-let warningLock = false;
-
-
-
-// ================= START WEBCAM =================
+let examTerminated = false;
+let warningCount = 0;
 
 // ================= CAMERA + FACE MONITORING =================
-
 document.addEventListener("DOMContentLoaded", async function(){
 
 const video = document.getElementById("webcam");
 
 try{
-
-// Ask camera permission
 const stream = await navigator.mediaDevices.getUserMedia({ video:true });
-
-// Show webcam preview
 video.srcObject = stream;
-
-console.log("Camera permission granted");
-
+console.log("Camera running in background");
 }catch(error){
-
 alert("Camera permission is required to attend this exam.");
-
 window.location.href="/candidate-dashboard/";
-
 return;
-
 }
 
-// Load face detection model
+// Load face model
 await faceapi.nets.tinyFaceDetector.loadFromUri(
 "https://justadudewhohacks.github.io/face-api.js/models"
 );
 
-console.log("Face model loaded");
+// Face detection loop
+let noFaceCount = 0;
 
-// Run face detection every 5 seconds
 setInterval(async function(){
 
 const detections = await faceapi.detectAllFaces(
 video,
-new faceapi.TinyFaceDetectorOptions()
+new faceapi.TinyFaceDetectorOptions({
+    inputSize: 416,
+    scoreThreshold: 0.5
+})
 );
 
 if(detections.length === 0){
 
-increaseWarning("NO_FACE_DETECTED");
+    noFaceCount++;
 
+    if(noFaceCount >= 3){   // allow 3 misses
+        increaseWarning("NO_FACE_DETECTED");
+        noFaceCount = 0;
+    }
+
+}else{
+    noFaceCount = 0; // reset if face detected
 }
 
 if(detections.length > 1){
-
-increaseWarning("MULTIPLE_FACES_DETECTED");
-
+    increaseWarning("MULTIPLE_FACES_DETECTED");
 }
 
 },5000);
@@ -204,322 +182,156 @@ increaseWarning("MULTIPLE_FACES_DETECTED");
 });
 
 
-// ================= WARNING COUNTER INITIALIZATION =================
-
-
-
-
-// ================= SEND ACTIVITY TO BACKEND =================
-
+// ================= SEND ACTIVITY =================
 function sendActivity(type){
-
 fetch("/log-activity/",{
-
 method:"POST",
-
-headers:{
-"Content-Type":"application/json"
-},
-
+headers:{ "Content-Type":"application/json" },
 body:JSON.stringify({
 attempt_id:"{{ attempt.id }}",
 activity_type:type
 })
-
 });
-
 }
-
-
 
 // ================= WARNING SYSTEM =================
-
 function increaseWarning(activity){
 
-fetch("/log-activity/",{
+if(examTerminated) return;
 
-method:"POST",
+if (window.lastWarningTime && Date.now() - window.lastWarningTime < 3000) return;
+window.lastWarningTime = Date.now();
 
-headers:{
-"Content-Type":"application/json"
-},
+warningCount++;
+sessionStorage.setItem("warningCount", warningCount);
 
-body:JSON.stringify({
-attempt_id:"{{ attempt.id }}",
-activity_type:activity
-})
+alert("Warning " + warningCount + " of " + maxWarnings + ": " + activity);
 
-})
-.then(response => response.json())
-.then(data => {
+sendActivity(activity);
 
-let warningCount = data.warnings;
-
-alert("Warning " + warningCount + "/3: " + activity);
-
-if(warningCount >= 3){
-
+if(warningCount >= maxWarnings){
+examTerminated = true;
 alert("Maximum warnings reached. Test will be submitted.");
-
-window.location.href="/finish-test/{{ test.id }}/";
-
+window.location.replace("/finish-test/{{ attempt.id }}/");
 }
-
-});
-
 }
 
 
-
-// ================= MULTIPLE TAB DETECTION =================
-
-if(!localStorage.getItem("exam_active")){
-localStorage.setItem("exam_active","true");
-}
-
-
-
-// ================= FULLSCREEN MODE =================
-
+// ================= FULLSCREEN =================
 function enterFullscreen(){
-
 let elem = document.documentElement;
-
 if(elem.requestFullscreen){
 elem.requestFullscreen();
 }
-
 }
 
-document.addEventListener("DOMContentLoaded", function(){
-enterFullscreen();
-});
-
-
+document.addEventListener("DOMContentLoaded", enterFullscreen);
 
 // ================= TAB SWITCH =================
-
 document.addEventListener("visibilitychange", function () {
-    if (document.visibilityState === "hidden") {
-
-        // Delay to avoid false triggers
-        setTimeout(() => {
-            if (document.visibilityState === "hidden") {
-                sendActivity("TAB_SWITCH");
-            }
-        }, 2000);  // 2 seconds
-    }
+if (document.visibilityState === "hidden") {
+setTimeout(() => {
+if (document.visibilityState === "hidden") {
+sendActivity("TAB_SWITCH");
+}
+}, 2000);
+}
 });
-
-
 
 // ================= FULLSCREEN EXIT =================
-
 document.addEventListener("fullscreenchange",function(){
-
 if(!document.fullscreenElement){
-
 increaseWarning("FULLSCREEN_EXIT");
-
-setTimeout(function(){
-enterFullscreen();
-},1000);
-
+setTimeout(enterFullscreen,1000);
 }
-
 });
-
-
 
 // ================= BLOCK REFRESH =================
-
-document.addEventListener("keydown",function(event){
-
-if(event.key==="F5"){
+document.addEventListener("keydown", function(event){
+if(event.key === "F5" || (event.ctrlKey && event.key === "r")){
 event.preventDefault();
 increaseWarning("PAGE_REFRESH");
 }
-
-if(event.ctrlKey && event.key==="r"){
-event.preventDefault();
-increaseWarning("PAGE_REFRESH");
-}
-
 });
-
-
-
-// ================= PAGE CLOSE =================
-
-window.addEventListener("beforeunload",function(){
-
-localStorage.removeItem("exam_active");
-
-sendActivity("PAGE_REFRESH");
-
-});
-
-
 
 // ================= INACTIVITY =================
-
 setInterval(function(){
-
 inactivityTime++;
-
 if(inactivityTime > 30){
-
 increaseWarning("INACTIVE");
-
 inactivityTime = 0;
-
 }
-
 },1000);
 
+document.addEventListener("mousemove", () => inactivityTime = 0);
+document.addEventListener("keypress", () => inactivityTime = 0);
 
-document.addEventListener("mousemove", resetTimer);
-document.addEventListener("keypress", resetTimer);
-
-function resetTimer(){
-inactivityTime = 0;
-}
-
-
-
-// ================= DEVTOOLS DETECTION =================
-
+// ================= DEVTOOLS =================
 let devtoolsTriggered = false;
-
 setInterval(function(){
-
 let threshold = 160;
-
 if(
 (window.outerWidth - window.innerWidth > threshold ||
 window.outerHeight - window.innerHeight > threshold)
 && !devtoolsTriggered){
-
 devtoolsTriggered = true;
-
 increaseWarning("DEVTOOLS_OPEN");
-
 }
-
 },2000);
 
-
-
 // ================= RIGHT CLICK =================
-
 document.addEventListener("contextmenu", function(event){
-
 event.preventDefault();
-
 increaseWarning("RIGHT_CLICK_BLOCKED");
-
 });
 
+// ================= COPY/PASTE =================
+document.addEventListener("copy", e => { e.preventDefault(); increaseWarning("COPY"); });
+document.addEventListener("paste", e => { e.preventDefault(); increaseWarning("PASTE"); });
 
-
-// ================= COPY =================
-
-document.addEventListener("copy", function(event){
-
-event.preventDefault();
-
-increaseWarning("COPY_ATTEMPT");
-
-});
-
-
-
-// ================= PASTE =================
-
-document.addEventListener("paste", function(event){
-
-event.preventDefault();
-
-increaseWarning("PASTE_ATTEMPT");
-
-});
-
-
-
-// ================= TEXT SELECTION =================
-
-document.addEventListener("selectstart", function(event){
-
-event.preventDefault();
-
-});
-
-</script>
-
-<!-- WEBCAM MONITORING -->
-
-<video id="webcam" autoplay style="display:none;"></video>
-<canvas id="canvas" style="display:none;"></canvas>
-
-<script>
-
-navigator.mediaDevices.getUserMedia({ video: true })
-.then(function(stream){
-
-    const video = document.getElementById("webcam");
-    video.srcObject = stream;
-
-})
-.catch(function(error){
-
-    console.log("Camera access denied");
-
-});
-
+// ================= SNAPSHOT =================
 function captureSnapshot(){
 
-    const video = document.getElementById("webcam");
-    const canvas = document.getElementById("canvas");
+const video = document.getElementById("webcam");
 
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+const canvas = document.createElement("canvas");
+canvas.width = video.videoWidth;
+canvas.height = video.videoHeight;
 
-    const context = canvas.getContext("2d");
-    context.drawImage(video,0,0);
+const ctx = canvas.getContext("2d");
+ctx.drawImage(video,0,0);
 
-    canvas.toBlob(function(blob){
+canvas.toBlob(function(blob){
+const formData = new FormData();
+formData.append("image", blob, "frame.jpg");
+formData.append("attempt_id","{{ attempt.id }}");
 
-        const formData = new FormData();
-        formData.append("image", blob, "frame.jpg");
-        formData.append("attempt_id","{{ attempt.id }}");
-
-        fetch("/save-webcam-frame/",{
-            method:"POST",
-            body:formData
-        });
-
-    });
+fetch("/save-webcam-frame/",{
+method:"POST",
+body:formData
+});
+});
 
 }
 
-setInterval(captureSnapshot,10000); // capture every 10 seconds
+setInterval(captureSnapshot,10000);
 
 </script>
 
+<!-- CODE EXECUTION -->
 <script>
+
 function runCode() {
 
     let code = document.getElementById("codeBox").value;
-    let language = document.getElementById("language").value; 
+    let language = document.getElementById("language").value;
 
     fetch("/run-code/", {
         method: "POST",
-        headers: {
-            "Content-Type": "application/json"
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
             code: code,
-            language_id: language,   
+            language_id: language,
             question_id: "{{ question.id }}",
             user_id: "{{ request.user.id }}",
             test_id: "{{ test.id }}"
@@ -527,8 +339,37 @@ function runCode() {
     })
     .then(res => res.json())
     .then(data => {
+
+        console.log("API RESPONSE:", data);  // ✅ DEBUG
+
+        let outputText = "";
+
+        if (data.error) {
+
+            outputText = "❌ Error:\n" + data.error;
+
+        } else {
+
+            outputText =
+                "🧾 Your Output:\n" + (data.output || "No output") +
+
+                "\n\n📌 Expected Output:\n" + (data.expected || "N/A") +
+
+                "\n\n✅ Test Cases Passed: " +
+                (data.passed || 0) + "/" + (data.total || 0) +
+
+                "\n\n🎯 Score: " + (data.score || 0) + "%";
+        }
+
+        document.getElementById("outputBox").innerText = outputText;
+
+    })
+    .catch(err => {
+
+        console.error("Run code error:", err);
+
         document.getElementById("outputBox").innerText =
-            data.output + "\nScore: " + data.score + "%";
+            "❌ Error running code. Check console.";
     });
 }
 </script>

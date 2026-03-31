@@ -31,6 +31,8 @@ function TestInterface() {
   const timeLeftRef = useRef(0);
   const tabIdRef = useRef(`exam-tab-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const [assessment, setAssessment] = useState(null);
+  const [sections, setSections] = useState([]);
+  const [activeSection, setActiveSection] = useState(null);
   const [questions, setQuestions] = useState([]);
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [answers, setAnswers] = useState({});
@@ -42,7 +44,21 @@ function TestInterface() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const assessmentDurationSeconds = useMemo(() => assessment?.remainingSeconds || (assessment?.durationMinutes || 20) * 60, [assessment]);
+  const activeSectionDurationSeconds = useMemo(() => {
+    if (activeSection?.remainingSeconds) {
+      return activeSection.remainingSeconds;
+    }
+    return (activeSection?.timeLimitMinutes || assessment?.durationMinutes || 20) * 60;
+  }, [activeSection, assessment]);
+
+  const isFinalSection = useMemo(() => {
+    if (!activeSection || !sections.length) {
+      return true;
+    }
+
+    const activeIndex = sections.findIndex((section) => String(section.id) === String(activeSection.id));
+    return activeIndex === sections.length - 1;
+  }, [activeSection, sections]);
 
   const handleSelectAnswer = (questionId, value) => {
     setAnswers((current) => ({ ...current, [questionId]: value }));
@@ -50,6 +66,44 @@ function TestInterface() {
 
   const moveToNextQuestion = () => {
     setCurrentQuestion((current) => Math.min(current + 1, Math.max(questions.length - 1, 0)));
+  };
+
+  const buildSectionAnswerPayload = () =>
+    questions.reduce((payload, question) => {
+      if (Object.prototype.hasOwnProperty.call(answers, question.id)) {
+        payload[question.id] = answers[question.id];
+      }
+      return payload;
+    }, {});
+
+  const loadAssessment = async (sectionId) => {
+    const response = await getQuestions(sectionId ? { section_id: sectionId } : {});
+    const nextQuestions = (response?.questions || []).map(normalizeQuestion);
+    const nextSections = response?.sections || [];
+    const nextActiveSection =
+      response?.activeSection ||
+      nextSections.find((section) => section.status === "current") ||
+      nextSections[0] ||
+      null;
+
+    setAssessment({
+      id: response?.assessmentId ?? null,
+      title: response?.title || "Assessment",
+      durationMinutes: response?.durationMinutes || 20,
+      remainingSeconds: response?.remainingSeconds || (response?.durationMinutes || 20) * 60,
+      overallRemainingSeconds: response?.overallRemainingSeconds || response?.remainingSeconds || 0,
+      scheduledStart: response?.scheduledStart || null,
+      scheduledEnd: response?.scheduledEnd || null,
+      attemptId: response?.attemptId || null,
+      testId: response?.testId || null,
+      observationMessage: response?.observationMessage || "You are under camera observation"
+    });
+    setSections(nextSections);
+    setActiveSection(nextActiveSection);
+    setQuestions(nextQuestions);
+    setCurrentQuestion(0);
+    timeLeftRef.current = nextActiveSection?.remainingSeconds || response?.remainingSeconds || 0;
+    setStatusMessage(response?.observationMessage || "You are under camera observation");
   };
 
   const sendViolationToBackend = async (activityType) => {
@@ -102,14 +156,14 @@ function TestInterface() {
     return canvas.toDataURL("image/jpeg", 0.8);
   };
 
-  const finalizeSubmission = async (options = {}) => {
+  const finalizeWholeAssessment = async (options = {}) => {
     if (submittedRef.current || submittingRef.current || !assessment) {
       return;
     }
 
     submittingRef.current = true;
     setIsSubmitting(true);
-    setStatusMessage(options.autoSubmitted ? options.message || "Submitting test..." : "Submitting test...");
+    setStatusMessage(options.message || "Submitting test...");
 
     try {
       const response = await submitTest({
@@ -117,8 +171,9 @@ function TestInterface() {
         testId: assessment.testId,
         attemptId: assessment.attemptId,
         answers,
-        timeTaken: Math.max(assessmentDurationSeconds - timeLeftRef.current, 0),
+        timeTaken: Math.max((assessment.overallRemainingSeconds || 0) - timeLeftRef.current, 0),
         violationsCount: violations,
+        autoSubmitReason: options.autoSubmitReason || ""
       });
 
       submittedRef.current = true;
@@ -144,7 +199,7 @@ function TestInterface() {
         state: {
           resultId: response.resultId,
           submissionResult: response,
-          autoSubmittedMessage: options.autoSubmitted ? options.message : "",
+          autoSubmittedMessage: options.autoSubmitted ? options.message : ""
         }
       });
     } catch (submitError) {
@@ -158,17 +213,82 @@ function TestInterface() {
     }
   };
 
+  const submitCurrentSection = async (options = {}) => {
+    if (submittedRef.current || submittingRef.current || !assessment || !activeSection) {
+      return;
+    }
+
+    submittingRef.current = true;
+    setIsSubmitting(true);
+    setStatusMessage(options.message || `Submitting ${activeSection.title || "section"}...`);
+
+    try {
+      const response = await submitTest({
+        assessmentId: assessment.id,
+        testId: assessment.testId,
+        attemptId: assessment.attemptId,
+        sectionId: activeSection.id,
+        answers: buildSectionAnswerPayload(),
+        timeTaken: Math.max(((activeSection.timeLimitMinutes || assessment.durationMinutes || 20) * 60) - timeLeftRef.current, 0),
+        violationsCount: violations,
+        autoSubmitted: options.autoSubmitted
+      });
+
+      if (response?.status === "section_saved" && response?.nextSectionId) {
+        await loadAssessment(response.nextSectionId);
+        setStatusMessage(options.message || `${activeSection.title} submitted. Moving to the next section.`);
+        return;
+      }
+
+      submittedRef.current = true;
+      setHasSubmitted(true);
+
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+      }
+
+      const activeTab = localStorage.getItem(ACTIVE_TAB_KEY);
+      if (activeTab) {
+        try {
+          const parsed = JSON.parse(activeTab);
+          if (parsed.id === tabIdRef.current) {
+            localStorage.removeItem(ACTIVE_TAB_KEY);
+          }
+        } catch (storageError) {
+          localStorage.removeItem(ACTIVE_TAB_KEY);
+        }
+      }
+
+      navigate("/result", {
+        state: {
+          resultId: response.resultId,
+          submissionResult: response,
+          autoSubmittedMessage: options.autoSubmitted ? options.message : ""
+        }
+      });
+    } catch (submitError) {
+      setStatusMessage(submitError.message || "Unable to submit section.");
+      setError(submitError.message || "Unable to submit section.");
+    } finally {
+      submittingRef.current = false;
+      setIsSubmitting(false);
+    }
+  };
+
   const confirmAndSubmit = async () => {
     if (hasSubmitted || isSubmitting) {
       return;
     }
 
-    const confirmed = window.confirm("Are you sure you want to submit your test?");
+    const label = isFinalSection ? "submit your test" : `submit the ${activeSection?.title || "current"} section`;
+    const confirmed = window.confirm(`Are you sure you want to ${label}?`);
     if (!confirmed) {
       return;
     }
 
-    await finalizeSubmission();
+    await submitCurrentSection({
+      message: isFinalSection ? "Submitting final section..." : `Submitting ${activeSection?.title || "section"}...`
+    });
   };
 
   useEffect(() => {
@@ -178,25 +298,7 @@ function TestInterface() {
       setStatusMessage("");
 
       try {
-        const response = await getQuestions();
-        const nextQuestions = (response?.questions || []).map(normalizeQuestion);
-
-        setAssessment({
-          id: response?.assessmentId ?? null,
-          title: response?.title || "Assessment",
-          durationMinutes: response?.durationMinutes || 20,
-          remainingSeconds: response?.remainingSeconds || (response?.durationMinutes || 20) * 60,
-          scheduledStart: response?.scheduledStart || null,
-          scheduledEnd: response?.scheduledEnd || null,
-          attemptId: response?.attemptId || null,
-          testId: response?.testId || null,
-          observationMessage: response?.observationMessage || "You are under camera observation",
-        });
-        setQuestions(nextQuestions);
-        setCurrentQuestion(0);
-        setAnswers({});
-        timeLeftRef.current = response?.remainingSeconds || (response?.durationMinutes || 20) * 60;
-        setStatusMessage(response?.observationMessage || "You are under camera observation");
+        await loadAssessment();
       } catch (loadError) {
         setError(loadError.message || "Unable to load questions.");
       } finally {
@@ -395,9 +497,10 @@ function TestInterface() {
 
     const scheduleInterval = window.setInterval(() => {
       if (Date.now() >= new Date(assessment.scheduledEnd).getTime()) {
-        void finalizeSubmission({
+        void finalizeWholeAssessment({
           autoSubmitted: true,
-          message: "Exam ended"
+          message: "Assessment time ended",
+          autoSubmitReason: "timeout"
         });
       }
     }, 1000);
@@ -407,9 +510,10 @@ function TestInterface() {
 
   useEffect(() => {
     if (violations >= 3 && !submittedRef.current && questions.length) {
-      void finalizeSubmission({
+      void finalizeWholeAssessment({
         autoSubmitted: true,
-        message: "Test auto-submitted due to violations"
+        message: "Test auto-submitted due to violations",
+        autoSubmitReason: "violations"
       });
     }
   }, [violations, questions.length]);
@@ -418,18 +522,19 @@ function TestInterface() {
     return <p className="p-6 text-sm text-slate-600">Loading assessment...</p>;
   }
 
-  if (error || !assessment || !questions.length) {
+  if (error || !assessment || !questions.length || !activeSection) {
     return <p className="p-6 text-sm text-rose-600">{error || "No assessment is available right now."}</p>;
   }
 
   return (
     <TimerSystem
-      durationSeconds={assessmentDurationSeconds}
+      key={activeSection.id}
+      durationSeconds={activeSectionDurationSeconds}
       isRunning={!hasSubmitted && !isSubmitting}
       onExpire={() =>
-        void finalizeSubmission({
+        void submitCurrentSection({
           autoSubmitted: true,
-          message: "Exam ended"
+          message: `${activeSection.title} time ended. Moving ahead automatically.`
         })
       }
     >
@@ -446,6 +551,9 @@ function TestInterface() {
                   <div>
                     <p className="text-sm font-bold uppercase tracking-[0.2em] text-emerald-600">Test Interface</p>
                     <h1 className="mt-2 text-3xl font-black text-slate-950">{assessment.title}</h1>
+                    <p className="mt-3 text-sm font-semibold text-slate-500">
+                      {activeSection.title} section
+                    </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-3">
                     <div className="rounded-full bg-slate-50 px-5 py-2 text-sm font-semibold text-slate-700">
@@ -454,6 +562,26 @@ function TestInterface() {
                     <div className="rounded-full bg-slate-50 px-5 py-2 text-sm font-semibold text-slate-700">Violations: {violations}</div>
                     <div className="rounded-full bg-slate-950 px-5 py-2 text-sm font-semibold text-white">{formattedTime}</div>
                   </div>
+                </div>
+
+                <div className="mt-6 flex flex-wrap gap-3">
+                  {sections.map((section) => (
+                    <div
+                      key={section.id}
+                      className={`rounded-2xl border px-4 py-3 text-sm ${
+                        String(section.id) === String(activeSection.id)
+                          ? "border-slate-950 bg-slate-950 text-white"
+                          : section.completed
+                            ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                            : "border-slate-200 bg-slate-50 text-slate-500"
+                      }`}
+                    >
+                      <p className="font-semibold">{section.title}</p>
+                      <p className="mt-1 text-xs uppercase tracking-[0.15em]">
+                        {section.completed ? "Completed" : section.locked ? "Locked" : "In Progress"}
+                      </p>
+                    </div>
+                  ))}
                 </div>
 
                 <div className="mt-8">
@@ -489,6 +617,7 @@ function TestInterface() {
                     onSubmit={confirmAndSubmit}
                     disabled={hasSubmitted || isSubmitting}
                     metadata={{ testName: assessment.title }}
+                    label={isFinalSection ? "Submit Test" : `Submit ${activeSection.title}`}
                   />
                 </div>
               </section>
@@ -503,6 +632,9 @@ function TestInterface() {
                 <div className="mt-5 flex h-64 items-center justify-center rounded-[24px] border border-white/10 bg-white/5 text-center text-sm text-slate-300">{cameraReady ? "Webcam monitoring active" : "Requesting camera access"}</div>
                 <p className="mt-4 text-sm text-slate-300">{assessment.observationMessage || "You are under camera observation"}</p>
                 <p className="mt-4 text-sm text-slate-300">AI proctoring observes tab switches, multiple tabs, face visibility, camera status, restricted clipboard actions, right-click attempts, and focus changes.</p>
+                <p className="mt-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-200">
+                  Active Section: <span className="font-semibold text-white">{activeSection.title}</span>
+                </p>
                 <Link to="/candidate" className="mt-6 inline-flex rounded-full border border-white/20 px-5 py-2 text-sm font-semibold text-white">Exit Test</Link>
               </aside>
             </div>

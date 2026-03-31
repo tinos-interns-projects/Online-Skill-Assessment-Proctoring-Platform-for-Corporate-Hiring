@@ -439,7 +439,8 @@ def results_api(request):
 @api_view(["GET", "POST"])
 @permission_classes([AllowAny])
 def assessments_api(request):
-    from .models import Skill
+    from .models import BlueprintSection, Skill
+    from .services.section_engine import infer_question_section_type
 
     if request.method == "GET":
         queryset = TestBlueprint.objects.prefetch_related("rules__skill", "questions").order_by("name")
@@ -451,6 +452,7 @@ def assessments_api(request):
     difficulty = payload.get("difficulty") or "Medium"
     duration_minutes = int(payload.get("durationMinutes") or 45)
     questions_payload = payload.get("questions") or []
+    sections_payload = payload.get("sections") or []
 
     if not title:
         return Response({"detail": "Assessment title is required."}, status=400)
@@ -468,16 +470,36 @@ def assessments_api(request):
     if skill_name:
         skill_obj, _ = Skill.objects.get_or_create(name=skill_name)
 
+    if sections_payload:
+        for index, item in enumerate(sections_payload):
+            BlueprintSection.objects.create(
+                blueprint=blueprint,
+                section_type=str(item.get("sectionType") or item.get("key") or "logical").lower(),
+                title=item.get("title") or str(item.get("sectionType") or "Section").title(),
+                order=int(item.get("order") or (index + 1)),
+                time_limit_minutes=int(item.get("timeLimitMinutes") or 15),
+            )
+
     option_map = ["a", "b", "c", "d"]
 
     for item in questions_payload:
         options = item.get("options") or []
         correct_index = int(item.get("correctOption", 0))
 
+        temp_question = Question(
+            question_type=item.get("type") or "mcq",
+            question_text=item.get("question", ""),
+            section_type=str(item.get("sectionType") or "").lower(),
+            skill=skill_obj,
+        )
+        section_type = temp_question.section_type or infer_question_section_type(temp_question)
+
         Question.objects.create(
             blueprint=blueprint,
             skill=skill_obj,
             difficulty=str(item.get("difficulty") or difficulty).lower(),
+            question_type=item.get("type") or "mcq",
+            section_type=section_type,
             question_text=item.get("question", ""),
             option_a=options[0] if len(options) > 0 else "",
             option_b=options[1] if len(options) > 1 else "",
@@ -487,6 +509,144 @@ def assessments_api(request):
         )
 
     return Response(AssessmentSerializer(blueprint).data, status=201)
+
+
+def resolve_employer_api_user(request):
+    from django.contrib.auth.models import User
+    from .models import UserProfile
+
+    if request.user.is_authenticated:
+        user = request.user
+    else:
+        user = User.objects.filter(userprofile__role="employer").order_by("id").first()
+        if user is None:
+            user = User.objects.create_user(
+                username="frontend_employer",
+                email="frontend_employer@example.com",
+                password=uuid.uuid4().hex,
+            )
+            UserProfile.objects.create(user=user, role="employer")
+
+    UserProfile.objects.get_or_create(user=user, defaults={"role": "employer"})
+    return user
+
+
+@api_view(["GET", "POST"])
+@permission_classes([AllowAny])
+def employer_templates_api(request):
+    from .models import TestBlueprint
+    from .services.employer_dashboard import create_employer_template, serialize_template
+
+    employer = resolve_employer_api_user(request)
+
+    if request.method == "GET":
+        templates = employer.assessment_templates.select_related("blueprint").prefetch_related("sections__blueprint_section")
+        return Response([serialize_template(template) for template in templates])
+
+    payload = request.data or {}
+    blueprint = TestBlueprint.objects.filter(id=payload.get("blueprintId")).first()
+    if not blueprint:
+        return Response({"detail": "Select a valid test blueprint."}, status=400)
+
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        return Response({"detail": "Template name is required."}, status=400)
+
+    template = create_employer_template(
+        employer,
+        {
+            "blueprint": blueprint,
+            "name": name,
+            "difficulty": payload.get("difficulty") or "Medium",
+            "total_duration_minutes": int(payload.get("totalDurationMinutes") or blueprint.duration_minutes or 45),
+            "sections": payload.get("sections") or [],
+        },
+    )
+
+    return Response(serialize_template(template), status=201)
+
+
+@api_view(["GET", "POST"])
+@permission_classes([AllowAny])
+def employer_assignments_api(request):
+    from django.contrib.auth.models import User
+    from datetime import datetime, timedelta
+    from .models import EmployerAssessmentTemplate, TestBlueprint, TestAssignment
+    from .services.employer_dashboard import create_test_assignment, serialize_assignment
+
+    employer = resolve_employer_api_user(request)
+
+    if request.method == "GET":
+        assignments = (
+            TestAssignment.objects.select_related(
+                "candidate",
+                "blueprint",
+                "template",
+                "test",
+            )
+            .filter(employer=employer)
+            .order_by("-assigned_at")
+        )
+        return Response([serialize_assignment(item) for item in assignments])
+
+    payload = request.data or {}
+    candidate = User.objects.filter(id=payload.get("candidateId"), userprofile__role="candidate").first()
+    blueprint = TestBlueprint.objects.filter(id=payload.get("blueprintId")).first()
+    template = EmployerAssessmentTemplate.objects.filter(id=payload.get("templateId"), employer=employer).first()
+
+    if not candidate:
+        return Response({"detail": "Select a valid candidate."}, status=400)
+    if not blueprint:
+        return Response({"detail": "Select a valid test blueprint."}, status=400)
+
+    start_value = payload.get("scheduledStart")
+    if not start_value:
+        return Response({"detail": "Start date and time are required."}, status=400)
+
+    scheduled_start = datetime.fromisoformat(str(start_value))
+    if timezone.is_naive(scheduled_start):
+        scheduled_start = timezone.make_aware(scheduled_start, timezone.get_current_timezone())
+
+    duration_minutes = int(payload.get("durationMinutes") or (template.total_duration_minutes if template else blueprint.duration_minutes or 45))
+
+    assignment = create_test_assignment(
+        employer=employer,
+        candidate=candidate,
+        blueprint=blueprint,
+        template=template,
+        scheduled_start=scheduled_start,
+        duration_minutes=duration_minutes,
+        request=request,
+    )
+
+    return Response(serialize_assignment(assignment), status=201)
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def employer_assignment_report_api(request, assignment_id):
+    from .models import TestAssignment
+    from .services.employer_dashboard import build_candidate_report_payload
+
+    employer = resolve_employer_api_user(request)
+    assignment = TestAssignment.objects.select_related("candidate", "blueprint", "template", "test").filter(
+        id=assignment_id,
+        employer=employer,
+    ).first()
+    if not assignment:
+        return Response({"detail": "Assignment not found."}, status=404)
+    if not assignment.test.attempt_set.filter(is_completed=True).exists():
+        return Response({"detail": "Test not completed or not submitted yet."}, status=400)
+
+    payload = build_candidate_report_payload(assignment)
+    payload["proctoring"]["webcamEvidence"] = [
+        {
+            **item,
+            "url": request.build_absolute_uri(item["url"]) if item.get("url") else "",
+        }
+        for item in payload["proctoring"]["webcamEvidence"]
+    ]
+    return Response(payload)
 
 from django.shortcuts import get_object_or_404
 from django.http import JsonResponse
@@ -595,27 +755,51 @@ from core.services.test_engine import TestEngineError
 
 @login_required
 def submit_answer_view(request, test_id, question_id):
+
     test = get_object_or_404(Test, id=test_id, user=request.user)
+
     question = get_object_or_404(
         TestQuestion,
         test=test,
         question_id=question_id
     ).question
 
-    selected_option = request.GET.get("option")
+    if request.method == "POST":
 
-    try:
-        submit_answer(
-            user=request.user,
-            test=test,
+        # Get MCQ OR coding answer
+        selected_option = request.POST.get("option") or request.POST.get("code")
+
+        attempt = Attempt.objects.filter(test=test).first()
+
+        # CREATE OR UPDATE ANSWER
+        answer, created = Answer.objects.get_or_create(
+            attempt=attempt,
             question=question,
-            selected_option=selected_option
+            defaults={
+                "selected_option": selected_option,
+                "is_correct": False,
+                "skill": getattr(question, "skill", None)  # ✅ FIXED
+            }
         )
+
+        # UPDATE VALUES (VERY IMPORTANT)
+        answer.selected_option = selected_option
+
+        # Handle MCQ correctness
+        if hasattr(question, "correct_option") and question.correct_option:
+            answer.is_correct = (selected_option == question.correct_option)
+        else:
+            answer.is_correct = False   # for coding (can improve later)
+
+        # Ensure skill is set (important for your DB)
+        if not answer.skill:
+            answer.skill = getattr(question, "skill", None)
+
+        answer.save()
+
         return redirect(f"/question/{test.id}/")
 
-    except TestEngineError as e:
-        return JsonResponse({"error": str(e)}, status=400)
-
+    return JsonResponse({"error": "Invalid request"}, status=400)
 
 
 
@@ -1183,6 +1367,7 @@ def candidate_report(request, test_id):
             "accuracy": 0,
             "correct": 0,
             "wrong": 0,
+            "attempted": 0,
             "unattempted": 0,
             "violations": []
         })
@@ -1223,6 +1408,7 @@ def candidate_report(request, test_id):
         "accuracy": accuracy,
         "correct": correct,
         "wrong": wrong,
+        "attempted": attempted, 
         "unattempted": unattempted,
         "violations": violations,
         "violation_summary": violation_summary,
@@ -1275,6 +1461,7 @@ def run_code(request):
 
         from django.contrib.auth.models import User
         from core.models import Question, Answer, Attempt
+        from core.services.employer_dashboard import update_coding_evaluation
 
         try:
             # ✅ Get user
@@ -1323,7 +1510,7 @@ def run_code(request):
             score = (passed / total) * 100 if total > 0 else 0
 
             # ✅ Save answer
-            Answer.objects.update_or_create(
+            answer, _ = Answer.objects.update_or_create(
                 attempt=attempt,
                 question=question,
                 defaults={
@@ -1334,9 +1521,22 @@ def run_code(request):
                     "difficulty": question.difficulty
                 }
             )
+            
+            expected_output = question.sample_output
+
+            update_coding_evaluation(
+                answer,
+                output=output,
+                expected_output=expected_output or "",
+                passed_test_cases=passed,
+                total_test_cases=total,
+            )
 
             return JsonResponse({
-                "output": f"Passed {passed}/{total} test cases",
+                "output": output,   # actual output of code
+                "expected": expected_output,  # expected result
+                "passed": passed,
+                "total": total,
                 "score": score
             })
 

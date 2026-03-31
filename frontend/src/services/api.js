@@ -44,6 +44,11 @@ export const detectFace = (payload) => request("/detect-face/", { method: "POST"
 export const logViolation = (payload) => request("/log-violation/", { method: "POST", body: payload });
 
 export const getEmployerStats = () => request("/employer/stats/");
+export const getEmployerTemplates = () => request("/employer/templates/");
+export const createEmployerTemplate = (payload) => request("/employer/templates/", { method: "POST", body: payload });
+export const getEmployerAssignments = () => request("/employer/assignments/");
+export const createEmployerAssignment = (payload) => request("/employer/assignments/", { method: "POST", body: payload });
+export const getEmployerAssignmentReport = (assignmentId) => request(`/employer/assignments/${assignmentId}/report/`);
 export const getCandidates = () => request("/candidates/");
 export const getEmployers = () => request("/employers/");
 export const getAssessments = () => request("/assessments/");
@@ -81,6 +86,11 @@ const api = {
   detectFace,
   logViolation,
   getEmployerStats,
+  getEmployerTemplates,
+  createEmployerTemplate,
+  getEmployerAssignments,
+  createEmployerAssignment,
+  getEmployerAssignmentReport,
   getCandidates,
   getEmployers,
   getAssessments,

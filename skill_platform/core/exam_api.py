@@ -2,9 +2,12 @@ import base64
 import uuid
 from datetime import timedelta
 
-import cv2
-import numpy as np
+try:
+    import numpy as np
+except ImportError:  # pragma: no cover - optional dependency in local environments
+    np = None
 from django.contrib.auth.models import User
+from django.core.exceptions import PermissionDenied
 from django.core.files.base import ContentFile
 from django.db import transaction
 from django.utils import timezone
@@ -21,10 +24,19 @@ from .models import (
     Skill,
     Test,
     TestBlueprint,
+    TestQuestion,
     UserProfile,
     WebcamCapture,
 )
 from .serializers import ResultSerializer
+from .services.section_engine import (
+    ensure_attempt_sections,
+    ensure_test_sections,
+    get_section_remaining_seconds,
+    is_section_accessible,
+    map_questions_to_sections,
+    sync_current_section,
+)
 
 
 OPTION_INDEX_TO_LETTER = {0: "a", 1: "b", 2: "c", 3: "d"}
@@ -39,7 +51,13 @@ FACE_REASON_MESSAGES = {
     "no_face": "Warning: no face detected.",
     "multiple_faces": "Warning: multiple faces detected.",
 }
-FACE_CASCADE = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+try:
+    import cv2
+except ImportError:  # pragma: no cover - optional dependency in local environments
+    cv2 = None
+
+
+FACE_CASCADE = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml") if cv2 else None
 
 
 def normalize_text(value):
@@ -49,22 +67,21 @@ def normalize_text(value):
 def absolute_media_url(request, path):
     if not path:
         return ""
-
     if path.startswith("http://") or path.startswith("https://"):
         return path
-
     return request.build_absolute_uri(path)
 
 
 def decode_base64_image(image_data):
     if not image_data:
         raise ValueError("Image data is required.")
-
     encoded = image_data.split(",", 1)[1] if "," in image_data else image_data
     return base64.b64decode(encoded)
 
 
 def load_cv_image(image_data):
+    if cv2 is None or np is None:
+        raise ValueError("Computer vision dependencies are unavailable.")
     binary = decode_base64_image(image_data)
     array = np.frombuffer(binary, dtype=np.uint8)
     image = cv2.imdecode(array, cv2.IMREAD_COLOR)
@@ -74,17 +91,10 @@ def load_cv_image(image_data):
 
 
 def resolve_api_user(request):
-    if request.user.is_authenticated:
-        user = request.user
-    else:
-        user, created = User.objects.get_or_create(
-            username="frontend_candidate",
-            defaults={"email": "frontend_candidate@example.com"},
-        )
-        if created:
-            user.set_unusable_password()
-            user.save(update_fields=["password"])
+    if not request.user.is_authenticated:
+        raise PermissionDenied("User not authenticated")
 
+    user = request.user
     UserProfile.objects.get_or_create(user=user, defaults={"role": "candidate"})
     return user
 
@@ -95,12 +105,7 @@ def resolve_assessment(assessment_id=None):
         if blueprint:
             return blueprint
 
-    blueprint = (
-        TestBlueprint.objects.filter(questions__is_active=True)
-        .distinct()
-        .order_by("name")
-        .first()
-    )
+    blueprint = TestBlueprint.objects.filter(questions__is_active=True).distinct().order_by("name").first()
     if blueprint:
         return blueprint
 
@@ -118,7 +123,7 @@ def get_assessment_questions(blueprint):
 
 def get_or_create_exam_session(user, blueprint):
     now = timezone.now()
-    duration_minutes = blueprint.duration_minutes or 20
+    duration_minutes = blueprint.duration_minutes or 60
     active_test = (
         Test.objects.filter(user=user, blueprint=blueprint, is_completed=False)
         .order_by("-started_at")
@@ -136,14 +141,59 @@ def get_or_create_exam_session(user, blueprint):
             is_completed=False,
         )
 
-    attempt = Attempt.objects.filter(user=user, test=active_test, is_completed=False).order_by("-started_at").first()
+    attempt = (
+        Attempt.objects.filter(user=user, test=active_test, is_completed=False)
+        .order_by("-started_at")
+        .first()
+    )
     if not attempt and not active_test.is_completed:
         attempt = Attempt.objects.create(user=user, test=active_test, is_completed=False)
 
     return active_test, attempt
 
 
-def serialize_question(question):
+def ensure_test_structure(test, blueprint):
+    questions = get_assessment_questions(blueprint)
+    sections = ensure_test_sections(test, questions)
+
+    test_questions = list(
+        TestQuestion.objects.filter(test=test)
+        .select_related("question__skill", "question__topic", "section")
+        .order_by("section__order", "id")
+    )
+
+    if not test_questions:
+        question_sections = map_questions_to_sections(questions, sections)
+        for question in questions:
+            TestQuestion.objects.create(
+                test=test,
+                question=question,
+                section=question_sections.get(question.id),
+            )
+
+        test_questions = list(
+            TestQuestion.objects.filter(test=test)
+            .select_related("question__skill", "question__topic", "section")
+            .order_by("section__order", "id")
+        )
+    else:
+        missing_section_records = [item for item in test_questions if item.section_id is None]
+        if missing_section_records:
+            question_sections = map_questions_to_sections([item.question for item in test_questions], sections)
+            for test_question in missing_section_records:
+                test_question.section = question_sections.get(test_question.question_id)
+                test_question.save(update_fields=["section"])
+            test_questions = list(
+                TestQuestion.objects.filter(test=test)
+                .select_related("question__skill", "question__topic", "section")
+                .order_by("section__order", "id")
+            )
+
+    return test_questions
+
+
+def serialize_test_question(test_question):
+    question = test_question.question
     raw_type = question.question_type or "mcq"
     question_type = QUESTION_TYPE_MAP.get(raw_type, "descriptive")
     options = [option for option in [question.option_a, question.option_b, question.option_c, question.option_d] if option]
@@ -160,6 +210,8 @@ def serialize_question(question):
         "explanation": question.explanation or "",
         "sampleInput": question.sample_input or "",
         "sampleOutput": question.sample_output or "",
+        "sectionType": test_question.section.section_type if test_question.section else (question.section_type or ""),
+        "sectionTitle": test_question.section.title if test_question.section else "",
     }
 
 
@@ -226,37 +278,75 @@ def evaluate_answer(question, submitted_value):
     }
 
 
-def build_breakdowns(evaluated_answers):
+def build_breakdowns_from_answers(answers):
     skill_breakdown = {}
     difficulty_breakdown = {}
 
-    for item in evaluated_answers:
-        question = item["question"]
-        if not item["is_attempted"]:
-            continue
-
-        skill_name = question.skill.name if question.skill else "General"
-        difficulty_name = (question.difficulty or "medium").title()
+    for answer in answers:
+        skill_name = answer.skill.name if answer.skill else "General"
+        difficulty_name = (answer.difficulty or "medium").title()
 
         skill_entry = skill_breakdown.setdefault(skill_name, {"correct": 0, "total": 0})
         skill_entry["total"] += 1
-        if item["is_correct"]:
+        if answer.is_correct:
             skill_entry["correct"] += 1
 
         difficulty_entry = difficulty_breakdown.setdefault(difficulty_name, {"correct": 0, "total": 0})
         difficulty_entry["total"] += 1
-        if item["is_correct"]:
+        if answer.is_correct:
             difficulty_entry["correct"] += 1
 
     return skill_breakdown, difficulty_breakdown
 
 
+def build_section_breakdown(attempt):
+    answers = Answer.objects.filter(attempt=attempt).select_related("section")
+    section_answers = {}
+    for answer in answers:
+        if not answer.section:
+            continue
+
+        entry = section_answers.setdefault(
+            answer.section_id,
+            {
+                "sectionId": answer.section_id,
+                "section": answer.section.title,
+                "correct": 0,
+                "attempted": 0,
+            },
+        )
+        entry["attempted"] += 1
+        if answer.is_correct:
+            entry["correct"] += 1
+
+    output = []
+    for section_attempt in attempt.section_attempts.select_related("section").order_by("section__order", "id"):
+        total_questions = TestQuestion.objects.filter(test=attempt.test, section=section_attempt.section).count()
+        answer_data = section_answers.get(section_attempt.section_id, {})
+        output.append(
+            {
+                "id": section_attempt.section_id,
+                "title": section_attempt.section.title,
+                "sectionType": section_attempt.section.section_type,
+                "timeLimitMinutes": section_attempt.section.time_limit_minutes,
+                "totalQuestions": total_questions,
+                "attemptedQuestions": answer_data.get("attempted", 0),
+                "correctAnswers": answer_data.get("correct", 0),
+                "status": "completed" if section_attempt.completed_at else "pending",
+                "autoSubmitted": section_attempt.auto_submitted,
+            }
+        )
+
+    return output
+
+
 def build_result_detail(result):
     attempt = result.attempt
-    answers = Answer.objects.filter(attempt=attempt).select_related("question")
+    answers = Answer.objects.filter(attempt=attempt).select_related("question", "section")
 
     correct_answers = answers.filter(is_correct=True).count()
-    wrong_answers = answers.filter(is_correct=False).count()
+    attempted_count = answers.count()
+    wrong_answers = max(attempted_count - correct_answers, 0)
     violations = CandidateActivity.objects.filter(attempt=attempt).count()
 
     explanation_items = []
@@ -269,13 +359,16 @@ def build_result_detail(result):
         elif question.code_solution:
             correct_answer = question.code_solution
 
-        explanation_items.append({
-            "questionId": question.id,
-            "question": question.question_text,
-            "submittedAnswer": submitted_answer,
-            "correctAnswer": correct_answer,
-            "explanation": question.explanation or "No explanation available.",
-        })
+        explanation_items.append(
+            {
+                "questionId": question.id,
+                "question": question.question_text,
+                "submittedAnswer": submitted_answer,
+                "correctAnswer": correct_answer,
+                "explanation": question.explanation or "No explanation available.",
+                "sectionTitle": answer.section.title if answer.section else "",
+            }
+        )
 
     return {
         "resultId": result.id,
@@ -283,11 +376,12 @@ def build_result_detail(result):
         "score": result.score,
         "accuracy": round(result.accuracy, 2),
         "totalQuestions": result.total_questions,
-        "attemptedQuestions": answers.count(),
+        "attemptedQuestions": attempted_count,
         "correctAnswers": correct_answers,
         "wrongAnswers": wrong_answers,
         "violations": violations,
         "explanations": explanation_items,
+        "sections": build_section_breakdown(attempt),
         "submittedAt": result.created_at.isoformat(),
     }
 
@@ -295,25 +389,161 @@ def build_result_detail(result):
 def resolve_attempt(request, attempt_id):
     if not attempt_id:
         return None
-
     user = resolve_api_user(request)
     return Attempt.objects.filter(id=attempt_id, user=user).select_related("test__blueprint").first()
+
+
+def get_section_attempts_with_current(attempt, now=None):
+    now = now or timezone.now()
+    current_section_attempt = sync_current_section(attempt, now)
+    section_attempts = ensure_attempt_sections(attempt)
+
+    while current_section_attempt:
+        has_questions = TestQuestion.objects.filter(test=attempt.test, section=current_section_attempt.section).exists()
+        if has_questions:
+            break
+
+        current_section_attempt.completed_at = now
+        current_section_attempt.auto_submitted = True
+        current_section_attempt.save(update_fields=["completed_at", "auto_submitted"])
+        current_section_attempt = sync_current_section(attempt, now)
+        section_attempts = ensure_attempt_sections(attempt)
+
+    return section_attempts, current_section_attempt
+
+
+def serialize_section_attempt(section_attempt, current_section_attempt, now=None):
+    now = now or timezone.now()
+    section = section_attempt.section
+    remaining_seconds = get_section_remaining_seconds(section_attempt, now) if not section_attempt.completed_at else 0
+    question_count = TestQuestion.objects.filter(test=section.test, section=section).count()
+
+    if section_attempt.completed_at:
+        status = "completed"
+    elif current_section_attempt and section_attempt.id == current_section_attempt.id:
+        status = "current"
+    else:
+        status = "locked"
+
+    return {
+        "id": section.id,
+        "title": section.title,
+        "sectionType": section.section_type,
+        "order": section.order,
+        "timeLimitMinutes": section.time_limit_minutes,
+        "remainingSeconds": remaining_seconds,
+        "questionCount": question_count,
+        "status": status,
+        "locked": status == "locked",
+        "completed": status == "completed",
+        "autoSubmitted": section_attempt.auto_submitted,
+    }
+
+
+def persist_answers_for_scope(attempt, test_questions, answers_payload, general_skill):
+    question_ids = [item.question_id for item in test_questions]
+    Answer.objects.filter(attempt=attempt, question_id__in=question_ids).delete()
+
+    attempted_count = 0
+    correct_count = 0
+    for test_question in test_questions:
+        evaluation = evaluate_answer(test_question.question, get_answer_payload(answers_payload, test_question.question_id))
+        if not evaluation["is_attempted"]:
+            continue
+
+        attempted_count += 1
+        if evaluation["is_correct"]:
+            correct_count += 1
+
+        Answer.objects.create(
+            attempt=attempt,
+            question=test_question.question,
+            section=test_question.section,
+            selected_option=evaluation["selected_option"],
+            code_answer=evaluation["code_answer"],
+            is_correct=evaluation["is_correct"],
+            skill=test_question.question.skill or general_skill,
+            difficulty=test_question.question.difficulty or "medium",
+            score=evaluation["score"],
+        )
+
+    return attempted_count, correct_count
+
+
+def apply_frontend_violations(attempt, violations_count):
+    existing_violations = CandidateActivity.objects.filter(attempt=attempt).count()
+    additional_violations = max(violations_count - existing_violations, 0)
+    for _ in range(additional_violations):
+        CandidateActivity.objects.create(attempt=attempt, activity_type="FRONTEND_VIOLATION")
+
+
+def finalize_attempt(attempt, user, time_taken=0, violations_count=0, now=None, auto_submit_reason=""):
+    now = now or timezone.now()
+    all_test_questions = list(TestQuestion.objects.filter(test=attempt.test).select_related("section", "question"))
+    answers = list(Answer.objects.filter(attempt=attempt).select_related("skill"))
+
+    total_questions = len(all_test_questions)
+    correct_count = sum(1 for answer in answers if answer.is_correct)
+    score_percentage = round((correct_count / total_questions) * 100) if total_questions else 0
+    skill_breakdown, difficulty_breakdown = build_breakdowns_from_answers(answers)
+
+    apply_frontend_violations(attempt, violations_count)
+    if auto_submit_reason == "violations":
+        CandidateActivity.objects.create(attempt=attempt, activity_type="AUTO_SUBMIT_VIOLATIONS")
+    elif auto_submit_reason == "timeout":
+        CandidateActivity.objects.create(attempt=attempt, activity_type="AUTO_SUBMIT_TIMEOUT")
+
+    attempt.is_completed = True
+    attempt.completed_at = now
+    if time_taken:
+        attempt.started_at = now - timedelta(seconds=max(time_taken, 0))
+    attempt.save(update_fields=["started_at", "completed_at", "is_completed"])
+
+    attempt.section_attempts.filter(completed_at__isnull=True).update(
+        completed_at=now,
+        auto_submitted=True,
+    )
+
+    test = attempt.test
+    test.is_completed = True
+    test.completed_at = now
+    test.save(update_fields=["completed_at", "is_completed"])
+
+    result, _ = Result.objects.update_or_create(
+        attempt=attempt,
+        defaults={
+            "user": user,
+            "test": test,
+            "score": score_percentage,
+            "total_questions": total_questions,
+            "accuracy": score_percentage,
+            "skill_breakdown": skill_breakdown,
+            "difficulty_breakdown": difficulty_breakdown,
+        },
+    )
+
+    detail = build_result_detail(result)
+    detail["timeTaken"] = time_taken
+    detail["attemptId"] = attempt.id
+    detail["testId"] = test.id
+    return detail
 
 
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def questions_api(request):
     assessment_id = request.query_params.get("assessment_id")
+    requested_section_id = request.query_params.get("section_id")
     blueprint = resolve_assessment(assessment_id)
     if not blueprint:
         return Response({"detail": "No assessment is available right now."}, status=404)
 
-    questions = get_assessment_questions(blueprint)
-    if not questions:
-        return Response({"detail": "No questions are available right now."}, status=404)
-
     user = resolve_api_user(request)
     test, attempt = get_or_create_exam_session(user, blueprint)
+    test_questions = ensure_test_structure(test, blueprint)
+    if not test_questions:
+        return Response({"detail": "No questions are available right now."}, status=404)
+
     now = timezone.now()
 
     if test.scheduled_start and now < test.scheduled_start:
@@ -322,20 +552,57 @@ def questions_api(request):
     if test.scheduled_end and now >= test.scheduled_end:
         return Response({"detail": "Exam ended.", "scheduledEnd": test.scheduled_end.isoformat()}, status=403)
 
-    remaining_seconds = int((test.scheduled_end - now).total_seconds()) if test.scheduled_end else (blueprint.duration_minutes or 20) * 60
+    section_attempts, current_section_attempt = get_section_attempts_with_current(attempt, now)
+    if not current_section_attempt:
+        result = Result.objects.filter(attempt=attempt).first()
+        if result:
+            detail = build_result_detail(result)
+            detail["detail"] = "Exam ended."
+            return Response(detail, status=403)
+        return Response({"detail": "Exam ended."}, status=403)
 
-    return Response({
-        "assessmentId": blueprint.id,
-        "title": blueprint.name,
-        "durationMinutes": blueprint.duration_minutes if blueprint.duration_minutes else 20,
-        "remainingSeconds": max(remaining_seconds, 0),
-        "scheduledStart": test.scheduled_start.isoformat() if test.scheduled_start else None,
-        "scheduledEnd": test.scheduled_end.isoformat() if test.scheduled_end else None,
-        "testId": test.id,
-        "attemptId": attempt.id if attempt else None,
-        "observationMessage": "You are under camera observation",
-        "questions": [serialize_question(question) for question in questions],
-    })
+    selected_section_attempt = current_section_attempt
+    if requested_section_id:
+        selected_section_attempt = next(
+            (item for item in section_attempts if str(item.section_id) == str(requested_section_id)),
+            None,
+        )
+        if not is_section_accessible(selected_section_attempt, current_section_attempt):
+            return Response({"detail": "Complete the current section before moving ahead."}, status=403)
+
+    active_test_questions = [
+        item
+        for item in test_questions
+        if item.section_id == selected_section_attempt.section_id
+    ]
+
+    response_sections = [
+        serialize_section_attempt(item, current_section_attempt, now)
+        for item in section_attempts
+    ]
+
+    remaining_seconds = get_section_remaining_seconds(selected_section_attempt, now)
+    overall_remaining_seconds = (
+        max(int((test.scheduled_end - now).total_seconds()), 0) if test.scheduled_end else remaining_seconds
+    )
+
+    return Response(
+        {
+            "assessmentId": blueprint.id,
+            "title": blueprint.name,
+            "durationMinutes": selected_section_attempt.section.time_limit_minutes,
+            "remainingSeconds": remaining_seconds,
+            "overallRemainingSeconds": overall_remaining_seconds,
+            "scheduledStart": test.scheduled_start.isoformat() if test.scheduled_start else None,
+            "scheduledEnd": test.scheduled_end.isoformat() if test.scheduled_end else None,
+            "testId": test.id,
+            "attemptId": attempt.id if attempt else None,
+            "observationMessage": "You are under camera observation",
+            "activeSection": serialize_section_attempt(selected_section_attempt, current_section_attempt, now),
+            "sections": response_sections,
+            "questions": [serialize_test_question(test_question) for test_question in active_test_questions],
+        }
+    )
 
 
 @api_view(["POST"])
@@ -357,17 +624,22 @@ def upload_screenshot_api(request):
         image=ContentFile(binary, name=filename),
     )
 
-    return Response({
-        "status": "saved",
-        "screenshotUrl": absolute_media_url(request, capture.image.url),
-        "timestamp": capture.timestamp.isoformat(),
-    })
+    return Response(
+        {
+            "status": "saved",
+            "screenshotUrl": absolute_media_url(request, capture.image.url),
+            "timestamp": capture.timestamp.isoformat(),
+        }
+    )
 
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def detect_face_api(request):
     payload = request.data or {}
+
+    if cv2 is None or np is None or FACE_CASCADE is None:
+        return Response({"violation": False, "reason": "opencv_unavailable", "faceCount": 0})
 
     try:
         _, image = load_cv_image(payload.get("imageData"))
@@ -385,12 +657,14 @@ def detect_face_api(request):
     else:
         reason = "clear"
 
-    return Response({
-        "violation": reason != "clear",
-        "reason": reason,
-        "message": FACE_REASON_MESSAGES.get(reason, "Face check clear."),
-        "faceCount": face_count,
-    })
+    return Response(
+        {
+            "violation": reason != "clear",
+            "reason": reason,
+            "message": FACE_REASON_MESSAGES.get(reason, "Face check clear."),
+            "faceCount": face_count,
+        }
+    )
 
 
 @api_view(["POST"])
@@ -404,10 +678,12 @@ def log_violation_api(request):
     activity_type = str(payload.get("activityType") or "UNKNOWN").upper()
     CandidateActivity.objects.create(attempt=attempt, activity_type=activity_type)
 
-    return Response({
-        "status": "logged",
-        "violations": CandidateActivity.objects.filter(attempt=attempt).count(),
-    })
+    return Response(
+        {
+            "status": "logged",
+            "violations": CandidateActivity.objects.filter(attempt=attempt).count(),
+        }
+    )
 
 
 @api_view(["POST"])
@@ -419,6 +695,9 @@ def submit_test_api(request):
     violations_count = max(int(payload.get("violationsCount") or 0), 0)
     assessment_id = payload.get("assessmentId")
     attempt_id = payload.get("attemptId")
+    section_id = payload.get("sectionId")
+    auto_submitted = bool(payload.get("autoSubmitted"))
+    auto_submit_reason = str(payload.get("autoSubmitReason") or "").strip().lower()
 
     if not isinstance(answers, dict):
         return Response({"detail": "Answers payload must be an object."}, status=400)
@@ -436,80 +715,69 @@ def submit_test_api(request):
             return Response({"detail": "Unable to resolve an assessment for submission."}, status=400)
         test, attempt = get_or_create_exam_session(user, blueprint)
 
-    questions = get_assessment_questions(blueprint)
-    if not questions:
+    test_questions = ensure_test_structure(test, blueprint)
+    if not test_questions:
         return Response({"detail": "Unable to resolve assessment questions for submission."}, status=400)
 
     now = timezone.now()
 
     with transaction.atomic():
-        Answer.objects.filter(attempt=attempt).delete()
-
-        evaluated_answers = []
-        for question in questions:
-            evaluation = evaluate_answer(question, get_answer_payload(answers, question.id))
-            evaluation["question"] = question
-            evaluated_answers.append(evaluation)
-
-            if not evaluation["is_attempted"]:
-                continue
-
-            Answer.objects.create(
-                attempt=attempt,
-                question=question,
-                selected_option=evaluation["selected_option"],
-                code_answer=evaluation["code_answer"],
-                is_correct=evaluation["is_correct"],
-                skill=question.skill or general_skill,
-                difficulty=question.difficulty or "medium",
-                score=evaluation["score"],
+        if section_id:
+            section_attempts, current_section_attempt = get_section_attempts_with_current(attempt, now)
+            selected_section_attempt = next(
+                (item for item in section_attempts if str(item.section_id) == str(section_id)),
+                None,
             )
+            if not is_section_accessible(selected_section_attempt, current_section_attempt):
+                return Response({"detail": "Complete the current section before moving ahead."}, status=403)
 
-        existing_violations = CandidateActivity.objects.filter(attempt=attempt).count()
-        additional_violations = max(violations_count - existing_violations, 0)
-        for _ in range(additional_violations):
-            CandidateActivity.objects.create(attempt=attempt, activity_type="FRONTEND_VIOLATION")
+            section_test_questions = [item for item in test_questions if item.section_id == selected_section_attempt.section_id]
+            persist_answers_for_scope(attempt, section_test_questions, answers, general_skill)
+            apply_frontend_violations(attempt, violations_count)
 
-        attempted_count = sum(1 for item in evaluated_answers if item["is_attempted"])
-        correct_count = sum(1 for item in evaluated_answers if item["is_attempted"] and item["is_correct"])
-        score_percentage = round((correct_count / len(questions)) * 100) if questions else 0
-        skill_breakdown, difficulty_breakdown = build_breakdowns(evaluated_answers)
+            if not selected_section_attempt.started_at:
+                selected_section_attempt.started_at = now
 
-        attempt.is_completed = True
-        attempt.completed_at = now
-        if time_taken:
-            attempt.started_at = now - timedelta(seconds=time_taken)
-        attempt.save(update_fields=["started_at", "completed_at", "is_completed"])
+            selected_section_attempt.completed_at = now
+            selected_section_attempt.auto_submitted = auto_submitted
+            selected_section_attempt.save(update_fields=["started_at", "completed_at", "auto_submitted"])
 
-        test.is_completed = True
-        test.completed_at = now
-        test.save(update_fields=["completed_at", "is_completed"])
+            section_attempts, next_section_attempt = get_section_attempts_with_current(attempt, now)
+            if next_section_attempt:
+                return Response(
+                    {
+                        "status": "section_saved",
+                        "attemptId": attempt.id,
+                        "testId": test.id,
+                        "nextSectionId": next_section_attempt.section_id,
+                        "sections": [
+                            serialize_section_attempt(item, next_section_attempt, now)
+                            for item in section_attempts
+                        ],
+                    }
+                )
 
-        result, _ = Result.objects.update_or_create(
+        else:
+            persist_answers_for_scope(attempt, test_questions, answers, general_skill)
+
+        detail = finalize_attempt(
             attempt=attempt,
-            defaults={
-                "user": user,
-                "test": test,
-                "score": score_percentage,
-                "total_questions": len(questions),
-                "accuracy": score_percentage,
-                "skill_breakdown": skill_breakdown,
-                "difficulty_breakdown": difficulty_breakdown,
-            },
+            user=user,
+            time_taken=time_taken,
+            violations_count=violations_count,
+            now=now,
+            auto_submit_reason=auto_submit_reason,
         )
 
-    detail = build_result_detail(result)
-    detail["attemptedQuestions"] = attempted_count
-    detail["timeTaken"] = time_taken
-    detail["attemptId"] = attempt.id
-    detail["testId"] = test.id
     return Response(detail, status=201)
 
 
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def results_api(request):
-    if request.query_params.get("summary") == "1" or not (request.query_params.get("result_id") or request.query_params.get("latest")):
+    if request.query_params.get("summary") == "1" or not (
+        request.query_params.get("result_id") or request.query_params.get("latest")
+    ):
         queryset = Result.objects.select_related("user", "test__blueprint", "attempt").order_by("-created_at")
         return Response(ResultSerializer(queryset, many=True).data)
 
@@ -530,8 +798,6 @@ def results_api(request):
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def employer_monitoring_api(request):
-    from django.contrib.auth.models import User
-
     assessment_count = TestBlueprint.objects.count()
     candidate_count = User.objects.filter(userprofile__role="candidate").count()
     live_tests = Attempt.objects.filter(is_completed=False).count()
@@ -547,8 +813,13 @@ def employer_monitoring_api(request):
         attempted_count = Answer.objects.filter(attempt=attempt).count()
         score = round((correct_count / attempted_count) * 100) if attempted_count else 0
 
+        now = timezone.now()
+        section_attempts, current_section_attempt = get_section_attempts_with_current(attempt, now)
+        current_section_title = current_section_attempt.section.title if current_section_attempt else "Completed"
+        current_section_time = get_section_remaining_seconds(current_section_attempt, now) if current_section_attempt else 0
+
         if test.scheduled_end:
-            remaining = (test.scheduled_end - timezone.now()).total_seconds()
+            remaining = (test.scheduled_end - now).total_seconds()
             if remaining > 0:
                 minutes = int(remaining // 60)
                 seconds = int(remaining % 60)
@@ -558,37 +829,49 @@ def employer_monitoring_api(request):
         else:
             time_left = "N/A"
 
-        live_monitoring.append({
-            "candidate": attempt.user.get_full_name() or attempt.user.username,
-            "test": test.blueprint.name,
-            "status": "In Progress",
-            "score": score,
-            "warnings": violations.count(),
-            "timeLeft": time_left,
-            "violationLogs": [
-                {
-                    "type": item.activity_type,
-                    "timestamp": item.timestamp.isoformat(),
-                }
-                for item in violations[:5]
-            ],
-            "screenshots": [
-                {
-                    "url": absolute_media_url(request, capture.image.url),
-                    "timestamp": capture.timestamp.isoformat(),
-                }
-                for capture in screenshots
-            ],
-        })
+        live_monitoring.append(
+            {
+                "candidate": attempt.user.get_full_name() or attempt.user.username,
+                "test": test.blueprint.name,
+                "status": "In Progress",
+                "score": score,
+                "attemptedQuestions": attempted_count,
+                "warnings": violations.count(),
+                "timeLeft": time_left,
+                "currentSection": current_section_title,
+                "sectionTimeLeft": current_section_time,
+                "assignmentId": getattr(getattr(test, "assignment", None), "id", None),
+                "violationLogs": [
+                    {
+                        "type": item.activity_type,
+                        "timestamp": item.timestamp.isoformat(),
+                    }
+                    for item in violations[:5]
+                ],
+                "screenshots": [
+                    {
+                        "url": absolute_media_url(request, capture.image.url),
+                        "timestamp": capture.timestamp.isoformat(),
+                    }
+                    for capture in screenshots
+                ],
+                "sections": [
+                    serialize_section_attempt(item, current_section_attempt, now)
+                    for item in section_attempts
+                ],
+            }
+        )
 
-    return Response({
-        "stats": [
-            {"label": "Assessments Created", "value": assessment_count},
-            {"label": "Candidates Assigned", "value": candidate_count},
-            {"label": "Live Tests", "value": live_tests},
-        ],
-        "liveMonitoring": live_monitoring,
-    })
+    return Response(
+        {
+            "stats": [
+                {"label": "Assessments Created", "value": assessment_count},
+                {"label": "Candidates Assigned", "value": candidate_count},
+                {"label": "Live Tests", "value": live_tests},
+            ],
+            "liveMonitoring": live_monitoring,
+        }
+    )
 
 
 @api_view(["DELETE"])

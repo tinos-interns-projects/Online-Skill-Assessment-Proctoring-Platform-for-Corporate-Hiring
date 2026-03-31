@@ -14,10 +14,13 @@ from .models import (
     Question,
     TestCase,
     TestBlueprint,
+    BlueprintSection,
     BlueprintRule,
     Test,
+    Section,
     TestQuestion,
     Attempt,
+    AttemptSection,
     Answer,
     Result,
     WebcamCapture,
@@ -64,10 +67,19 @@ class ResultAdmin(admin.ModelAdmin):
         'user__email',
     )
 
+# Inline section editor for adding multiple blueprint sections on the same page.
+class BlueprintSectionInline(admin.TabularInline):
+    model = BlueprintSection
+    extra = 3
+    fields = ("title", "section_type", "order", "time_limit_minutes")
+    ordering = ("order", "id")
+
 
 @admin.register(TestBlueprint)
 class TestBlueprintAdmin(admin.ModelAdmin):
     list_display = ("id","name",)
+    # Extend the existing admin without changing its current save behavior.
+    inlines = [BlueprintSectionInline]
 
     def save_model(self, request, obj, form, change):
         super().save_model(request, obj, form, change)
@@ -89,6 +101,12 @@ class TestBlueprintAdmin(admin.ModelAdmin):
 class BlueprintRuleAdmin(admin.ModelAdmin):
     list_display = ('blueprint', 'skill', 'difficulty', 'number_of_questions')
     list_filter = ('skill', 'difficulty')
+
+
+@admin.register(BlueprintSection)
+class BlueprintSectionAdmin(admin.ModelAdmin):
+    list_display = ("blueprint", "title", "section_type", "order", "time_limit_minutes")
+    list_filter = ("section_type",)
 
 
 @admin.register(Attempt)
@@ -116,6 +134,7 @@ class AnswerAdmin(admin.ModelAdmin):
     list_display = (
         'id',
         'attempt',
+        'section',
         'question',
         'selected_option',
         'is_correct',
@@ -175,8 +194,20 @@ class TestAdmin(admin.ModelAdmin):
 
 @admin.register(TestQuestion)
 class TestQuestionAdmin(admin.ModelAdmin):
-    list_display = ('test', 'question')
+    list_display = ('test', 'section', 'question')
     list_filter = ('test',)
+
+
+@admin.register(Section)
+class SectionAdmin(admin.ModelAdmin):
+    list_display = ("test", "title", "section_type", "order", "time_limit_minutes")
+    list_filter = ("section_type",)
+
+
+@admin.register(AttemptSection)
+class AttemptSectionAdmin(admin.ModelAdmin):
+    list_display = ("attempt", "section", "started_at", "completed_at", "auto_submitted")
+    list_filter = ("auto_submitted", "section__section_type")
 
 
 from .models import UserProfile

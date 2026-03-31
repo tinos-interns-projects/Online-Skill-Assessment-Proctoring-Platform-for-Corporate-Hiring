@@ -20,10 +20,11 @@ class QuestionSerializer(serializers.ModelSerializer):
     options = serializers.SerializerMethodField()
     answer = serializers.SerializerMethodField()
     correctOption = serializers.SerializerMethodField()
+    sectionType = serializers.CharField(source="section_type", allow_blank=True)
 
     class Meta:
         model = Question
-        fields = ["id", "question", "options", "answer", "correctOption", "difficulty"]
+        fields = ["id", "question", "options", "answer", "correctOption", "difficulty", "sectionType"]
 
     def get_options(self, obj):
         return [option for option in [obj.option_a, obj.option_b, obj.option_c, obj.option_d] if option]
@@ -42,10 +43,11 @@ class AssessmentSerializer(serializers.ModelSerializer):
     questionCount = serializers.SerializerMethodField()
     difficulty = serializers.SerializerMethodField()
     questions = serializers.SerializerMethodField()
+    sections = serializers.SerializerMethodField()
 
     class Meta:
         model = TestBlueprint
-        fields = ["id", "title", "skill", "durationMinutes", "questionCount", "difficulty", "questions"]
+        fields = ["id", "title", "skill", "durationMinutes", "questionCount", "difficulty", "questions", "sections"]
 
     def get_skill(self, obj):
         if obj.primary_skill:
@@ -93,6 +95,40 @@ class AssessmentSerializer(serializers.ModelSerializer):
 
         derived_questions = Question.objects.filter(id__in=derived_ids)
         return QuestionSerializer(derived_questions, many=True).data
+
+    def get_sections(self, obj):
+        blueprint_sections = obj.sections.order_by("order", "id")
+        if blueprint_sections.exists():
+            return [
+                {
+                    "id": section.id,
+                    "title": section.title,
+                    "sectionType": section.section_type,
+                    "order": section.order,
+                    "timeLimitMinutes": section.time_limit_minutes,
+                }
+                for section in blueprint_sections
+            ]
+
+        default_titles = [
+            ("verbal", "Verbal"),
+            ("numerical", "Numerical"),
+            ("logical", "Logical"),
+            ("coding", "Coding"),
+        ]
+        total_minutes = obj.duration_minutes or 60
+        default_minutes = max(10, min(20, round(total_minutes / len(default_titles))))
+
+        return [
+            {
+                "id": f"default-{key}",
+                "title": title,
+                "sectionType": key,
+                "order": index + 1,
+                "timeLimitMinutes": default_minutes,
+            }
+            for index, (key, title) in enumerate(default_titles)
+        ]
 
 
 class CandidateSerializer(serializers.Serializer):
