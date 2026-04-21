@@ -124,7 +124,11 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+]
+
+CORS_ALLOW_CREDENTIALS = True
 
 # AUTH REDIRECTS
 
@@ -134,7 +138,32 @@ LOGOUT_REDIRECT_URL = '/login/'
 
 # CSRF settings
 CSRF_COOKIE_SECURE = False
-CSRF_TRUSTED_ORIGINS = ["http://127.0.0.1:8000"]
+CSRF_TRUSTED_ORIGINS = [
+    "http://127.0.0.1:8000",
+    "http://localhost:5173",
+
+]
+
+
+# ------------------------------
+# Django REST Framework settings
+# ------------------------------
+
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.SessionAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+}
+
+
+# ------------------------------
+# Frontend URL (React)
+# ------------------------------
+
+FRONTEND_URL = "http://localhost:5173"
 
 
 # Email configuration (for development)
@@ -151,6 +180,8 @@ DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 # Media file configuration (for uploaded files like webcam images)
 MEDIA_URL = "/media/"
 MEDIA_ROOT = os.path.join(BASE_DIR, "media")
+
+
 
 
 

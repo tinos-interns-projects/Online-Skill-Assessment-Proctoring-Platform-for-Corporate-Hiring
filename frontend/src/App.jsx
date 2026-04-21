@@ -32,6 +32,7 @@ function App() {
     <BrowserRouter>
       <ScrollToHash />
       <Routes>
+
         <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<RoleSelection />} />
@@ -46,6 +47,7 @@ function App() {
         <Route path="/pricing" element={<Pricing />} />
         <Route path="/resources/blog" element={<Blog />} />
         <Route path="/resources/docs" element={<Documentation />} />
+
         <Route
           path="/admin"
           element={
@@ -61,6 +63,7 @@ function App() {
           <Route path="reports" element={<AdminReports />} />
           <Route path="settings" element={<AdminSettings />} />
         </Route>
+
         <Route
           path="/employer"
           element={
@@ -69,6 +72,7 @@ function App() {
             </ProtectedRoute>
           }
         />
+
         <Route
           path="/candidate"
           element={
@@ -77,6 +81,10 @@ function App() {
             </ProtectedRoute>
           }
         />
+
+        {/* ⭐ Invitation link route */}
+        <Route path="/invite/:token" element={<TestInterface />} />
+
         <Route
           path="/test"
           element={
@@ -85,6 +93,7 @@ function App() {
             </ProtectedRoute>
           }
         />
+
         <Route
           path="/result"
           element={
@@ -93,6 +102,7 @@ function App() {
             </ProtectedRoute>
           }
         />
+
       </Routes>
     </BrowserRouter>
   );

@@ -9,6 +9,34 @@
 
 <h1>Candidate Dashboard</h1>
 
+<h2>Assigned Tests</h2>
+
+{% if assigned_tests %}
+<ul>
+{% for assignment in assigned_tests %}
+<li>
+    {{ assignment.template.name|default:assignment.test.blueprint.name }}
+    -
+    Scheduled: {{ assignment.scheduled_start }}
+    -
+    Duration: {{ assignment.duration_minutes }} minutes
+    -
+    Status: {{ assignment.display_status }}
+    -
+    {% if assignment.display_status == "Active" or assignment.display_status == "In Progress" %}
+    <a href="{% url 'assessment' %}">Start Test</a>
+    {% elif assignment.display_status == "Expired" %}
+    Expired
+    {% else %}
+    {{ assignment.display_status }}
+    {% endif %}
+</li>
+{% endfor %}
+</ul>
+{% else %}
+<p>No tests have been assigned to you yet.</p>
+{% endif %}
+
 <h2>Overview</h2>
 
 <p>Total Tests Taken: {{ total_tests }}</p>

@@ -14,6 +14,7 @@ from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from core.models import TestInvitation
 
 from .models import (
     Answer,
@@ -37,6 +38,7 @@ from .services.section_engine import (
     map_questions_to_sections,
     sync_current_section,
 )
+from .services.employer_dashboard import calculate_test_status, get_test_end_time
 
 
 OPTION_INDEX_TO_LETTER = {0: "a", 1: "b", 2: "c", 3: "d"}
@@ -532,47 +534,107 @@ def finalize_attempt(attempt, user, time_taken=0, violations_count=0, now=None, 
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def questions_api(request):
+
+    token = request.GET.get("token")
     assessment_id = request.query_params.get("assessment_id")
     requested_section_id = request.query_params.get("section_id")
-    blueprint = resolve_assessment(assessment_id)
-    if not blueprint:
-        return Response({"detail": "No assessment is available right now."}, status=404)
 
-    user = resolve_api_user(request)
-    test, attempt = get_or_create_exam_session(user, blueprint)
+    invitation = None
+    user = None
+    test = None
+    attempt = None
+
+    # ---------- INVITATION FLOW ----------
+    if token:
+        try:
+            invitation = TestInvitation.objects.select_related(
+                "candidate", "test", "test__blueprint"
+            ).get(token=token)
+
+            user = invitation.candidate
+            test = invitation.test
+            blueprint = test.blueprint
+
+        except TestInvitation.DoesNotExist:
+            return Response({"detail": "Invalid invitation token"}, status=403)
+
+        # get or create attempt
+        attempt = Attempt.objects.filter(test=test, user=user).first()
+
+        if not attempt:
+            attempt = Attempt.objects.create(
+                test=test,
+                user=user,
+                is_completed=False
+            )
+
+    # ---------- NORMAL LOGIN FLOW ----------
+    else:
+        blueprint = resolve_assessment(assessment_id)
+        user = resolve_api_user(request)
+
+        if not blueprint:
+            return Response({"detail": "No assessment is available right now."}, status=404)
+
+        test, attempt = get_or_create_exam_session(user, blueprint)
+
+    # ---------- GENERATE QUESTIONS ----------
     test_questions = ensure_test_structure(test, blueprint)
+
     if not test_questions:
         return Response({"detail": "No questions are available right now."}, status=404)
 
     now = timezone.now()
 
     if test.scheduled_start and now < test.scheduled_start:
-        return Response({"detail": "Exam not started.", "scheduledStart": test.scheduled_start.isoformat()}, status=403)
+       return Response(
+           {
+              "status": "not_started",
+              "detail": "Exam not started.",
+              "scheduledStart": test.scheduled_start.isoformat()
+           },
+           status=200
+       )
 
     if test.scheduled_end and now >= test.scheduled_end:
-        return Response({"detail": "Exam ended.", "scheduledEnd": test.scheduled_end.isoformat()}, status=403)
+        return Response({
+            "detail": "Exam ended.",
+            "scheduledEnd": test.scheduled_end.isoformat()
+        }, status=403)
+    
+    # Ensure attempt start time is set correctly
+    if not attempt.started_at:
+        attempt.started_at = now
+        attempt.save()
 
     section_attempts, current_section_attempt = get_section_attempts_with_current(attempt, now)
+
     if not current_section_attempt:
         result = Result.objects.filter(attempt=attempt).first()
+
         if result:
             detail = build_result_detail(result)
             detail["detail"] = "Exam ended."
             return Response(detail, status=403)
+
         return Response({"detail": "Exam ended."}, status=403)
 
     selected_section_attempt = current_section_attempt
+
     if requested_section_id:
         selected_section_attempt = next(
             (item for item in section_attempts if str(item.section_id) == str(requested_section_id)),
-            None,
+            current_section_attempt,
         )
+
         if not is_section_accessible(selected_section_attempt, current_section_attempt):
-            return Response({"detail": "Complete the current section before moving ahead."}, status=403)
+            return Response(
+                {"detail": "Complete the current section before moving ahead."},
+                status=403,
+            )
 
     active_test_questions = [
-        item
-        for item in test_questions
+        item for item in test_questions
         if item.section_id == selected_section_attempt.section_id
     ]
 
@@ -582,28 +644,38 @@ def questions_api(request):
     ]
 
     remaining_seconds = get_section_remaining_seconds(selected_section_attempt, now)
+
     overall_remaining_seconds = (
-        max(int((test.scheduled_end - now).total_seconds()), 0) if test.scheduled_end else remaining_seconds
+        max(int((test.scheduled_end - now).total_seconds()), 0)
+        if test.scheduled_end
+        else remaining_seconds
     )
 
-    return Response(
-        {
-            "assessmentId": blueprint.id,
-            "title": blueprint.name,
-            "durationMinutes": selected_section_attempt.section.time_limit_minutes,
-            "remainingSeconds": remaining_seconds,
-            "overallRemainingSeconds": overall_remaining_seconds,
-            "scheduledStart": test.scheduled_start.isoformat() if test.scheduled_start else None,
-            "scheduledEnd": test.scheduled_end.isoformat() if test.scheduled_end else None,
-            "testId": test.id,
-            "attemptId": attempt.id if attempt else None,
-            "observationMessage": "You are under camera observation",
-            "activeSection": serialize_section_attempt(selected_section_attempt, current_section_attempt, now),
-            "sections": response_sections,
-            "questions": [serialize_test_question(test_question) for test_question in active_test_questions],
-        }
-    )
+    remaining_seconds = max(remaining_seconds, 1)
 
+    if overall_remaining_seconds <= 0:
+        overall_remaining_seconds = 1
+
+    return Response({
+        "assessmentId": blueprint.id,
+        "title": blueprint.name,
+        "durationMinutes": selected_section_attempt.section.time_limit_minutes,
+        "remainingSeconds": remaining_seconds,
+        "overallRemainingSeconds": overall_remaining_seconds,
+        "scheduledStart": test.scheduled_start.isoformat() if test.scheduled_start else None,
+        "scheduledEnd": test.scheduled_end.isoformat() if test.scheduled_end else None,
+        "testId": test.id,
+        "attemptId": attempt.id,
+        "observationMessage": "You are under camera observation",
+        "activeSection": serialize_section_attempt(
+            selected_section_attempt, current_section_attempt, now
+        ),
+        "sections": response_sections,
+        "questions": [
+            serialize_test_question(test_question)
+            for test_question in active_test_questions
+        ],
+    })
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
@@ -689,6 +761,10 @@ def log_violation_api(request):
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def submit_test_api(request):
+
+    print("SUBMIT API CALLED")
+    print("sectionId:", request.data.get("sectionId"))
+
     payload = request.data or {}
     answers = payload.get("answers") or {}
     time_taken = max(int(payload.get("timeTaken") or 0), 0)
@@ -729,8 +805,13 @@ def submit_test_api(request):
                 None,
             )
             if not is_section_accessible(selected_section_attempt, current_section_attempt):
-                return Response({"detail": "Complete the current section before moving ahead."}, status=403)
-
+                return Response({
+                  "status": "invalid_section",
+                  "detail": "Section not accessible",
+                  "attemptId": attempt.id,
+                  "testId": test.id
+                }, status=200)
+            
             section_test_questions = [item for item in test_questions if item.section_id == selected_section_attempt.section_id]
             persist_answers_for_scope(attempt, section_test_questions, answers, general_skill)
             apply_frontend_violations(attempt, violations_count)
@@ -817,9 +898,11 @@ def employer_monitoring_api(request):
         section_attempts, current_section_attempt = get_section_attempts_with_current(attempt, now)
         current_section_title = current_section_attempt.section.title if current_section_attempt else "Completed"
         current_section_time = get_section_remaining_seconds(current_section_attempt, now) if current_section_attempt else 0
+        status = calculate_test_status(test, now)
 
-        if test.scheduled_end:
-            remaining = (test.scheduled_end - now).total_seconds()
+        test_end_time = get_test_end_time(test)
+        if test_end_time:
+            remaining = (test_end_time - now).total_seconds()
             if remaining > 0:
                 minutes = int(remaining // 60)
                 seconds = int(remaining % 60)
@@ -833,7 +916,7 @@ def employer_monitoring_api(request):
             {
                 "candidate": attempt.user.get_full_name() or attempt.user.username,
                 "test": test.blueprint.name,
-                "status": "In Progress",
+                "status": status,
                 "score": score,
                 "attemptedQuestions": attempted_count,
                 "warnings": violations.count(),

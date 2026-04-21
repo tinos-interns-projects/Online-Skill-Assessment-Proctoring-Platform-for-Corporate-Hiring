@@ -1,3 +1,4 @@
+
 from django.db.models import Sum
 from rest_framework import serializers
 
@@ -15,27 +16,29 @@ def option_letter_to_index(value):
     return {"a": 0, "b": 1, "c": 2, "d": 3}.get(normalized)
 
 
+# =========================
+# QUESTION SERIALIZER
+# =========================
 class QuestionSerializer(serializers.ModelSerializer):
     question = serializers.CharField(source="question_text")
     options = serializers.SerializerMethodField()
-    answer = serializers.SerializerMethodField()
-    correctOption = serializers.SerializerMethodField()
     sectionType = serializers.CharField(source="section_type", allow_blank=True)
 
     class Meta:
         model = Question
-        fields = ["id", "question", "options", "answer", "correctOption", "difficulty", "sectionType"]
+        fields = ["id", "question", "options", "difficulty", "sectionType"]
 
     def get_options(self, obj):
-        return [option for option in [obj.option_a, obj.option_b, obj.option_c, obj.option_d] if option]
-
-    def get_answer(self, obj):
-        return option_letter_to_index(obj.correct_option)
-
-    def get_correctOption(self, obj):
-        return option_letter_to_index(obj.correct_option)
+        return [
+            option
+            for option in [obj.option_a, obj.option_b, obj.option_c, obj.option_d]
+            if option
+        ]
 
 
+# =========================
+# ASSESSMENT SERIALIZER
+# =========================
 class AssessmentSerializer(serializers.ModelSerializer):
     title = serializers.CharField(source="name")
     skill = serializers.SerializerMethodField()
@@ -47,7 +50,16 @@ class AssessmentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = TestBlueprint
-        fields = ["id", "title", "skill", "durationMinutes", "questionCount", "difficulty", "questions", "sections"]
+        fields = [
+            "id",
+            "title",
+            "skill",
+            "durationMinutes",
+            "questionCount",
+            "difficulty",
+            "questions",
+            "sections",
+        ]
 
     def get_skill(self, obj):
         if obj.primary_skill:
@@ -71,7 +83,11 @@ class AssessmentSerializer(serializers.ModelSerializer):
             return obj.difficulty
 
         first_rule = obj.rules.first()
-        return first_rule.difficulty.title() if first_rule and first_rule.difficulty else "Medium"
+        return (
+            first_rule.difficulty.title()
+            if first_rule and first_rule.difficulty
+            else "Medium"
+        )
 
     def get_questions(self, obj):
         direct_questions = obj.questions.filter(is_active=True)
@@ -81,14 +97,19 @@ class AssessmentSerializer(serializers.ModelSerializer):
         derived_ids = []
         for rule in obj.rules.select_related("skill", "topic"):
             queryset = Question.objects.filter(is_active=True)
+
             if rule.skill_id:
                 queryset = queryset.filter(skill=rule.skill)
+
             if rule.topic_id:
                 queryset = queryset.filter(topic=rule.topic)
+
             if rule.difficulty:
                 queryset = queryset.filter(difficulty=rule.difficulty)
 
-            derived_ids.extend(list(queryset.values_list("id", flat=True)[: rule.number_of_questions]))
+            derived_ids.extend(
+                list(queryset.values_list("id", flat=True)[: rule.number_of_questions])
+            )
 
         if not derived_ids:
             return []
@@ -98,6 +119,7 @@ class AssessmentSerializer(serializers.ModelSerializer):
 
     def get_sections(self, obj):
         blueprint_sections = obj.sections.order_by("order", "id")
+
         if blueprint_sections.exists():
             return [
                 {
@@ -116,12 +138,13 @@ class AssessmentSerializer(serializers.ModelSerializer):
             ("logical", "Logical"),
             ("coding", "Coding"),
         ]
+
         total_minutes = obj.duration_minutes or 60
         default_minutes = max(10, min(20, round(total_minutes / len(default_titles))))
 
         return [
             {
-                "id": f"default-{key}",
+                "id": index + 1,
                 "title": title,
                 "sectionType": key,
                 "order": index + 1,
@@ -131,6 +154,9 @@ class AssessmentSerializer(serializers.ModelSerializer):
         ]
 
 
+# =========================
+# CANDIDATE SERIALIZER
+# =========================
 class CandidateSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     name = serializers.CharField()
@@ -141,11 +167,15 @@ class CandidateSerializer(serializers.Serializer):
     status = serializers.CharField()
 
 
+# =========================
+# RESULT SERIALIZER
+# =========================
 class ResultSerializer(serializers.ModelSerializer):
     candidate = serializers.CharField(source="user.username")
     test = serializers.CharField(source="test.blueprint.name")
     title = serializers.CharField(source="test.blueprint.name")
     totalQuestions = serializers.IntegerField(source="total_questions")
+
     attempted = serializers.SerializerMethodField()
     correct = serializers.SerializerMethodField()
     wrong = serializers.SerializerMethodField()
@@ -170,15 +200,22 @@ class ResultSerializer(serializers.ModelSerializer):
         ]
 
     def get_correct(self, obj):
-        return round((obj.accuracy / 100) * obj.total_questions) if obj.total_questions else obj.score
-
-    def get_attempted(self, obj):
-        return self.get_correct(obj) + self.get_wrong(obj)
+        return (
+            round((obj.accuracy / 100) * obj.total_questions)
+            if obj.total_questions
+            else obj.score
+        )
 
     def get_wrong(self, obj):
+        if not obj.attempt:
+            return 0
+
         attempted = obj.attempt.answer_set.count()
         correct = self.get_correct(obj)
         return max(attempted - correct, 0)
+
+    def get_attempted(self, obj):
+        return self.get_correct(obj) + self.get_wrong(obj)
 
     def get_unattempted(self, obj):
         return max(obj.total_questions - self.get_attempted(obj), 0)
@@ -187,6 +224,9 @@ class ResultSerializer(serializers.ModelSerializer):
         return "Passed" if obj.accuracy >= 70 else "Review"
 
 
+# =========================
+# TEST SERIALIZER
+# =========================
 class TestSerializer(serializers.ModelSerializer):
     blueprint = serializers.CharField(source="blueprint.name")
     name = serializers.CharField(source="blueprint.name")
@@ -199,9 +239,14 @@ class TestSerializer(serializers.ModelSerializer):
         fields = ["id", "name", "blueprint", "candidates", "start", "status"]
 
     def get_start(self, obj):
-        return obj.scheduled_start.strftime("%Y-%m-%d %H:%M") if obj.scheduled_start else ""
+        return (
+            obj.scheduled_start.strftime("%Y-%m-%d %H:%M")
+            if obj.scheduled_start
+            else ""
+        )
 
     def get_status(self, obj):
         if obj.is_completed:
             return "Completed"
         return "Live" if obj.is_generated else "Scheduled"
+

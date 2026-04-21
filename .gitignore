@@ -1,7 +1,23 @@
+# Python / Django
 myvenv/
 __pycache__/
 *.pyc
 db.sqlite3
 media/
 staticfiles/
+
+# Environment variables
 .env
+
+# React / Node
+node_modules/
+frontend/node_modules/
+frontend/.npm-cache/
+
+# Vite
+.vite/
+frontend/node_modules/.vite/
+
+# OS / misc
+.DS_Store
+Thumbs.db

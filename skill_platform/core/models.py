@@ -129,6 +129,14 @@ class BlueprintRule(models.Model):
         on_delete=models.CASCADE,
         related_name='rules'
     )
+
+    section = models.ForeignKey(
+        BlueprintSection,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True
+    )
+
     skill = models.ForeignKey(Skill, on_delete=models.CASCADE)
     topic = models.ForeignKey(
         Topic,

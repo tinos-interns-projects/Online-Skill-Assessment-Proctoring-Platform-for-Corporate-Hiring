@@ -34,7 +34,7 @@
 
     <label>Select Candidate</label><br>
     <select name="candidate" required>
-        {% for candidate in candidates %}
+{% for candidate in candidates %}
         <option value="{{ candidate.id }}">
             {{ candidate.username }}
         </option>
@@ -69,24 +69,18 @@
     <th>Action</th>
 </tr>
 
-{% for test in tests %}
+{% for assignment in assignments %}
 <tr>
-    <td>{{ test.user.username }}</td>
-    <td>{{ test.blueprint.name }}</td>
+    <td>{{ assignment.candidate.username }}</td>
+    <td>{{ assignment.template.name|default:assignment.test.blueprint.name }}</td>
+
+    <td>{{ assignment.display_status }}</td>
+
+    <td>{{ assignment.assigned_at }}</td>
 
     <td>
-        {% if test.is_completed %}
-            Completed
-        {% else %}
-            Pending
-        {% endif %}
-    </td>
-
-    <td>{{ test.started_at }}</td>
-
-    <td>
-        {% if test.is_completed %}
-            <a href="{% url 'candidate_report' test.id %}">View Report</a>
+        {% if assignment.display_status == "Completed" %}
+            <a href="{% url 'candidate_report' assignment.test.id %}">View Report</a>
         {% else %}
             -
         {% endif %}

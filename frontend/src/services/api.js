@@ -22,6 +22,7 @@ async function request(endpoint, options = {}) {
   const response = await fetch(buildUrl(endpoint, options.query), {
     method: options.method || "GET",
     headers,
+    credentials: "include", 
     body: options.body ? (isFormData ? options.body : JSON.stringify(options.body)) : undefined
   });
 
@@ -49,6 +50,7 @@ export const createEmployerTemplate = (payload) => request("/employer/templates/
 export const getEmployerAssignments = () => request("/employer/assignments/");
 export const createEmployerAssignment = (payload) => request("/employer/assignments/", { method: "POST", body: payload });
 export const getEmployerAssignmentReport = (assignmentId) => request(`/employer/assignments/${assignmentId}/report/`);
+export const getCandidateDashboard = () => request("/candidate/dashboard/");
 export const getCandidates = () => request("/candidates/");
 export const getEmployers = () => request("/employers/");
 export const getAssessments = () => request("/assessments/");
@@ -91,6 +93,7 @@ const api = {
   getEmployerAssignments,
   createEmployerAssignment,
   getEmployerAssignmentReport,
+  getCandidateDashboard,
   getCandidates,
   getEmployers,
   getAssessments,

@@ -10,28 +10,28 @@ function TimerSystem({ durationSeconds, isRunning = true, onExpire, children }) 
   const [timeLeft, setTimeLeft] = useState(durationSeconds);
   const hasExpiredRef = useRef(false);
 
-  useEffect(() => {
-    setTimeLeft(durationSeconds);
-    hasExpiredRef.current = false;
-  }, [durationSeconds]);
+useEffect(() => {
+  if (!isRunning) return;
 
-  useEffect(() => {
-    if (!isRunning || hasExpiredRef.current) {
-      return undefined;
-    }
+  // Prevent running when duration is invalid
+  if (durationSeconds <= 0) return;
 
-    if (timeLeft <= 0) {
-      hasExpiredRef.current = true;
-      onExpire?.();
-      return undefined;
-    }
+  // Prevent multiple expire calls
+  if (hasExpiredRef.current) return;
 
-    const timer = window.setTimeout(() => {
-      setTimeLeft((current) => Math.max(current - 1, 0));
-    }, 1000);
+  if (timeLeft <= 0) {
+    hasExpiredRef.current = true;
+    onExpire?.();
+    return;
+  }
 
-    return () => window.clearTimeout(timer);
-  }, [isRunning, onExpire, timeLeft]);
+  const timer = window.setTimeout(() => {
+    setTimeLeft((current) => Math.max(current - 1, 0));
+  }, 1000);
+
+  return () => window.clearTimeout(timer);
+}, [isRunning, onExpire, timeLeft, durationSeconds]);
+
 
   const payload = { timeLeft, formattedTime: formatTime(timeLeft) };
 

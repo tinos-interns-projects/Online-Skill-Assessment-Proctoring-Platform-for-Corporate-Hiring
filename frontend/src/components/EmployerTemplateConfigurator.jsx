@@ -75,7 +75,7 @@ function EmployerTemplateConfigurator({ assessments = [], onSaveTemplate, saving
   const [message, setMessage] = useState("");
 
   const selectedAssessment = useMemo(
-    () => assessments.find((assessment) => String(assessment.id) === String(form.blueprintId)) || assessments[0] || null,
+    () => assessments.find((assessment) => String(assessment.id) === String(form.blueprintId)) || null,
     [assessments, form.blueprintId]
   );
 
@@ -87,7 +87,7 @@ function EmployerTemplateConfigurator({ assessments = [], onSaveTemplate, saving
     // Keep the form aligned with the selected admin-created blueprint.
     setForm((current) => ({
       ...current,
-      blueprintId: current.blueprintId || selectedAssessment.id,
+      blueprintId: current.blueprintId || "",
       primarySkill: current.primarySkill || getBlueprintSkill(selectedAssessment),
       difficulty: current.difficulty || getBlueprintDifficulty(selectedAssessment),
       sections: buildSectionRows(selectedAssessment),
@@ -176,13 +176,14 @@ function EmployerTemplateConfigurator({ assessments = [], onSaveTemplate, saving
           <div>
             <label className="mb-2 block text-sm font-semibold text-slate-700">Select Blueprint</label>
             <select
-              value={form.blueprintId}
-              onChange={(event) => handleBlueprintChange(event.target.value)}
-              className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-emerald-400 focus:bg-white"
-            >
-              {assessments.map((assessment) => (
-                <option key={assessment.id} value={assessment.id}>{assessment.title}</option>
-              ))}
+            value={form.blueprintId}
+            onChange={(event) => handleBlueprintChange(event.target.value)}
+            className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-emerald-400 focus:bg-white"
+          >
+            <option value="">Select Blueprint</option>
+            {assessments.map((assessment) => (
+              <option key={assessment.id} value={assessment.id}>{assessment.title}</option>
+            ))}
             </select>
           </div>
           <div>

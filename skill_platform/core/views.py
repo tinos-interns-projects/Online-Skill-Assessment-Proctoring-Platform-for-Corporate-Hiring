@@ -8,6 +8,8 @@ from core.services.blueprint_validator import (
     BlueprintValidationError
 )
 
+from rest_framework.permissions import AllowAny
+
 import json
 from collections import defaultdict
 import uuid
@@ -17,7 +19,8 @@ from core.models import Test, Attempt, Answer, Result, TestQuestion, WebcamCaptu
 from django.contrib.auth import authenticate, login
 from django.core.mail import send_mail
 from django.conf import settings
-
+from django.views.decorators.csrf import csrf_exempt
+from core.models import Question, CandidateActivity, TestInvitation
 
 import subprocess
 
@@ -73,7 +76,7 @@ def login_view(request):
         if user is not None:
             login(request, user)
 
-            # 🔍 DEBUG (check terminal)
+            #  DEBUG (check terminal)
             print("User:", user)
             print("Is staff:", user.is_staff)
             print("Is superuser:", user.is_superuser)
@@ -100,7 +103,7 @@ def login_view(request):
                 elif role == "candidate":
                     return redirect("candidate_dashboard")
 
-            # 🔥 Fallback (VERY IMPORTANT)
+            #  Fallback
             return redirect("/login/")
 
         else:
@@ -340,9 +343,18 @@ def analytics_api(request):
 def employer_stats_api(request):
     from django.contrib.auth.models import User
     from django.db.models import Avg
+    from .models import TestAssignment
+    from .services.employer_dashboard import calculate_test_status
 
     assessment_count = TestBlueprint.objects.count()
-    candidate_count = User.objects.filter(userprofile__role="candidate").count()
+    active_candidate_count = 0
+    completed_assessment_count = 0
+    for assignment in TestAssignment.objects.select_related("test"):
+        status = calculate_test_status(assignment.test)
+        if status == "Active":
+            active_candidate_count += 1
+        if status == "Completed":
+            completed_assessment_count += 1
     live_tests = Attempt.objects.filter(is_completed=False).count()
     average_accuracy = Result.objects.aggregate(avg=Avg("accuracy"))["avg"] or 0
 
@@ -353,6 +365,7 @@ def employer_stats_api(request):
         test = attempt.test
         warnings = CandidateActivity.objects.filter(attempt=attempt).count()
         score = Answer.objects.filter(attempt=attempt, is_correct=True).count()
+        status = calculate_test_status(test)
 
         if test.scheduled_end:
             remaining = (test.scheduled_end - timezone.now()).total_seconds()
@@ -368,7 +381,7 @@ def employer_stats_api(request):
         live_monitoring.append({
             "candidate": attempt.user.get_full_name() or attempt.user.username,
             "test": test.blueprint.name,
-            "status": "In Progress",
+            "status": status,
             "score": score,
             "warnings": warnings,
             "timeLeft": time_left,
@@ -377,7 +390,8 @@ def employer_stats_api(request):
     return Response({
         "stats": [
             {"label": "Assessments Created", "value": assessment_count},
-            {"label": "Candidates Assigned", "value": candidate_count},
+            {"label": "Candidates Assigned", "value": active_candidate_count},
+            {"label": "Completed Assessments", "value": completed_assessment_count},
             {"label": "Live Tests", "value": live_tests},
             {"label": "Avg Score", "value": f"{round(average_accuracy)}%"},
         ],
@@ -389,20 +403,54 @@ def employer_stats_api(request):
 @permission_classes([AllowAny])
 def candidates_api(request):
     from django.contrib.auth.models import User
+    from .models import TestAssignment
+    from .services.employer_dashboard import assignment_status
 
     users = User.objects.filter(userprofile__role="candidate").order_by("username")
+    assignment_queryset = TestAssignment.objects.select_related(
+        "candidate",
+        "test",
+        "template",
+        "blueprint",
+    ).order_by("candidate_id", "-assigned_at", "-id")
+
+    # Keep all candidates visible, but source assigned test details from the
+    # assignment table so employer and candidate dashboards reflect the same records.
+    assignment_by_candidate = {}
+    for assignment in assignment_queryset:
+        if request.user.is_authenticated and hasattr(request.user, "userprofile"):
+            if request.user.userprofile.role == "employer" and assignment.employer_id != request.user.id:
+                continue
+        assignment_by_candidate.setdefault(assignment.candidate_id, assignment)
+
     payload = []
 
     for user in users:
+        latest_assignment = assignment_by_candidate.get(user.id)
         latest_result = Result.objects.filter(user=user).order_by("-created_at").first()
+        assigned_test_name = ""
+        status = "Not Assigned"
+        stage = "Not Assigned"
+
+        if latest_assignment:
+            assigned_test_name = (
+                latest_assignment.template.name
+                if latest_assignment.template
+                else latest_assignment.blueprint.name
+            )
+            status = assignment_status(latest_assignment)
+            stage = assigned_test_name
+        elif latest_result:
+            stage = "Completed"
+
         payload.append({
             "id": user.id,
             "name": user.get_full_name() or user.username,
             "email": user.email or "",
-            "stage": "Completed" if latest_result else "Assigned",
+            "stage": stage,
             "role": "Candidate",
             "company": "",
-            "status": "Completed" if latest_result else "Active",
+            "status": status,
         })
 
     return Response(CandidateSerializer(payload, many=True).data)
@@ -434,6 +482,65 @@ def employers_api(request):
 def results_api(request):
     queryset = Result.objects.select_related("user", "test__blueprint", "attempt").order_by("-created_at")
     return Response(ResultSerializer(queryset, many=True).data)
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def candidate_dashboard_api(request):
+    from .models import TestAssignment
+    from .services.employer_dashboard import assignment_status, get_test_end_time
+
+    if not request.user.is_authenticated:
+        return Response({
+            "assignedTests": [],
+            "expiredTests": [],
+            "completedTests": [],
+        })
+
+    assignments = (
+        TestAssignment.objects.filter(candidate=request.user)
+        .select_related("blueprint", "template", "test")
+        .prefetch_related("test__questions")
+        .order_by("-scheduled_start", "-assigned_at")
+    )
+
+    assigned_tests = []
+    expired_tests = []
+    completed_tests = []
+
+    for assignment in assignments:
+        status = assignment_status(assignment)
+        result = Result.objects.filter(
+            user=request.user,
+            test=assignment.test
+        ).order_by("-created_at").first()
+
+        item = {
+            "id": assignment.id,
+            "testId": assignment.test_id,
+            "title": assignment.template.name if assignment.template else assignment.blueprint.name,
+            "durationMinutes": assignment.duration_minutes,
+            "questionCount": assignment.test.questions.count(),
+            "scheduledStart": assignment.scheduled_start.isoformat(),
+            "scheduledEnd": get_test_end_time(assignment.test).isoformat() if get_test_end_time(assignment.test) else "",
+            "status": status,
+            "resultId": result.id if result else None,
+            "score": round(result.accuracy, 2) if result else None,
+            "reviewLabel": result.status if result else "",
+        }
+
+        if status == "Completed":
+            completed_tests.append(item)
+        elif status == "Expired":
+            expired_tests.append(item)
+        else:
+            assigned_tests.append(item)
+
+    return Response({
+        "assignedTests": assigned_tests,
+        "expiredTests": expired_tests,
+        "completedTests": completed_tests,
+    })
 
 
 @api_view(["GET", "POST"])
@@ -753,10 +860,10 @@ def get_next_question(request, test_id):
 from core.services.test_engine import TestEngineError
 
 
-@login_required
+@csrf_exempt
 def submit_answer_view(request, test_id, question_id):
 
-    test = get_object_or_404(Test, id=test_id, user=request.user)
+    test = get_object_or_404(Test, id=test_id)
 
     question = get_object_or_404(
         TestQuestion,
@@ -934,8 +1041,16 @@ def admin_dashboard(request):
 
 @login_required
 def candidate_dashboard(request):
+    from .models import TestAssignment
+    from .services.employer_dashboard import assignment_status
 
     results = Result.objects.filter(user=request.user)
+    assigned_tests = TestAssignment.objects.filter(
+        candidate=request.user
+    ).select_related("test__blueprint", "template", "candidate").order_by("-scheduled_start", "-assigned_at")
+
+    for assignment in assigned_tests:
+        assignment.display_status = assignment_status(assignment)
 
     total_tests = results.count()
 
@@ -998,7 +1113,8 @@ def candidate_dashboard(request):
     "skill_chart_values": json.dumps(list(skill_summary.values())),
 
     "difficulty_chart_labels": json.dumps(list(difficulty_summary.keys())),
-    "difficulty_chart_values": json.dumps(list(difficulty_summary.values()))
+    "difficulty_chart_values": json.dumps(list(difficulty_summary.values())),
+    "assigned_tests": assigned_tests,
 
 })
 
@@ -1007,12 +1123,8 @@ from django.contrib.auth.models import User
 
 from core.services.test_engine import generate_test_questions
 
-from datetime import timedelta
-from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-
-from datetime import datetime, timedelta
 from django.utils import timezone
 
 
@@ -1027,6 +1139,8 @@ import uuid
 
 @login_required
 def employer_dashboard(request):
+    from .models import TestAssignment
+    from .services.employer_dashboard import assignment_status
 
     if not hasattr(request.user, "userprofile"):
         return redirect("login")
@@ -1036,7 +1150,16 @@ def employer_dashboard(request):
 
     blueprints = TestBlueprint.objects.all()
     candidates = User.objects.filter(userprofile__role="candidate")
-    tests = Test.objects.select_related("user", "blueprint").order_by("-scheduled_start")
+    assignments = TestAssignment.objects.filter(
+        employer=request.user
+    ).select_related(
+        "candidate",
+        "test__blueprint",
+        "template",
+    ).order_by("-scheduled_start", "-assigned_at")
+
+    for assignment in assignments:
+        assignment.display_status = assignment_status(assignment)
 
     message = None
 
@@ -1067,7 +1190,7 @@ def employer_dashboard(request):
             return render(request, "employer_dashboard.html", {
                 "blueprints": blueprints,
                 "candidates": candidates,
-                "tests": tests,
+                "assignments": assignments,
                 "monitor_data": [],
                 "message": message
             })
@@ -1080,12 +1203,12 @@ def employer_dashboard(request):
             return render(request, "employer_dashboard.html", {
                 "blueprints": blueprints,
                 "candidates": candidates,
-                "tests": tests,
+                "assignments": assignments,
                 "monitor_data": [],
                 "message": message
             })
 
-        # ✅ FIXED TIMEZONE ISSUE
+        #  FIXED TIMEZONE ISSUE
         scheduled_start = datetime.fromisoformat(start_time)
 
         if timezone.is_naive(scheduled_start):
@@ -1102,7 +1225,7 @@ def employer_dashboard(request):
             return render(request, "employer_dashboard.html", {
                 "blueprints": blueprints,
                 "candidates": candidates,
-                "tests": tests,
+                "assignments": assignments,
                 "monitor_data": [],
                 "message": message
             })
@@ -1133,7 +1256,7 @@ def employer_dashboard(request):
             token=token
         )
 
-        invitation_link = request.build_absolute_uri(f"/invite/{token}/")
+        invitation_link = f"{settings.FRONTEND_URL}/invite/{token}"
 
         # ------------------------------
         # SEND EMAIL
@@ -1212,7 +1335,7 @@ Assessment Platform
     return render(request, "employer_dashboard.html", {
         "blueprints": blueprints,
         "candidates": candidates,
-        "tests": tests,
+        "assignments": assignments,
         "monitor_data": monitor_data,
         "message": message
     })
@@ -1426,7 +1549,10 @@ def save_webcam_frame(request):
         attempt_id = request.POST.get("attempt_id")
         image = request.FILES.get("image")
 
-        attempt = Attempt.objects.get(id=attempt_id)
+        attempt = Attempt.objects.filter(id=attempt_id).first()
+
+        if not attempt:
+            return JsonResponse({"error": "Invalid attempt"}, status=400)
 
         WebcamCapture.objects.create(
             attempt=attempt,
@@ -1446,7 +1572,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 
 @csrf_exempt
-def run_code(request):
+def run_code_api(request):
 
     if request.method == "POST":
 
@@ -1509,7 +1635,7 @@ def run_code(request):
 
             score = (passed / total) * 100 if total > 0 else 0
 
-            # ✅ Save answer
+            # Save answer
             answer, _ = Answer.objects.update_or_create(
                 attempt=attempt,
                 question=question,

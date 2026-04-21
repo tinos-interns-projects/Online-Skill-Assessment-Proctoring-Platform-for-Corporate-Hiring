@@ -1,9 +1,13 @@
 from django.db import transaction
 from django.utils import timezone
 
-from core.models import Answer, Attempt, Question, Result, TestQuestion
-from core.services.blueprint_validator import BlueprintValidationError, validate_blueprint
+from core.models import Answer, Attempt, Result, TestQuestion
+from core.services.blueprint_validator import BlueprintValidationError
 from core.services.section_engine import ensure_test_sections, map_questions_to_sections
+from core.services.question_engine import (
+    QuestionGenerationError,
+    generate_sectioned_questions_for_blueprint,
+)
 
 
 class TestEngineError(Exception):
@@ -33,60 +37,42 @@ def generate_test_questions(test):
     blueprint = test.blueprint
 
     with transaction.atomic():
-        direct_questions = list(
-            blueprint.questions.filter(is_active=True).select_related("skill", "topic").order_by("id")
-        )
+        try:
+            section_payloads = generate_sectioned_questions_for_blueprint(blueprint)
+        except (QuestionGenerationError, BlueprintValidationError) as error:
+            raise TestEngineError(str(error))
 
-        selected_questions = []
-        if direct_questions:
-            selected_questions = direct_questions
-        else:
-            try:
-                validate_blueprint(blueprint)
-            except BlueprintValidationError as error:
-                raise TestEngineError(str(error))
-
-            used_question_ids = set()
-            for rule in blueprint.rules.all():
-                base_qs = Question.objects.filter(
-                    skill=rule.skill,
-                    difficulty=rule.difficulty,
-                ).exclude(id__in=used_question_ids)
-
-                mcq_qs = base_qs.filter(question_type="mcq")
-                coding_qs = base_qs.filter(question_type="coding")
-
-                total_needed = rule.number_of_questions
-                if total_needed <= 0:
-                    continue
-
-                selected = []
-                coding_count = 1 if coding_qs.exists() else 0
-                mcq_count = total_needed - coding_count
-
-                if mcq_count > 0:
-                    selected.extend(list(mcq_qs.order_by("?")[:mcq_count]))
-
-                if coding_count > 0:
-                    selected.extend(list(coding_qs.order_by("?")[:coding_count]))
-
-                for question in selected:
-                    used_question_ids.add(question.id)
-
-                selected_questions.extend(selected)
-
+        selected_questions = [
+            question
+            for section_payload in section_payloads
+            for question in section_payload["questions"]
+        ]
         if not selected_questions:
             raise TestEngineError("No questions generated from blueprint.")
 
         sections = ensure_test_sections(test, selected_questions)
+        section_by_blueprint_id = {
+            section.blueprint_section_id: section
+            for section in sections
+            if section.blueprint_section_id
+        }
+        section_by_type = {section.section_type: section for section in sections}
         question_sections = map_questions_to_sections(selected_questions, sections)
 
-        for question in selected_questions:
-            TestQuestion.objects.create(
-                test=test,
-                question=question,
-                section=question_sections.get(question.id),
-            )
+        for section_payload in section_payloads:
+            runtime_section = None
+            blueprint_section = section_payload.get("section")
+            if blueprint_section:
+                runtime_section = section_by_blueprint_id.get(blueprint_section.id)
+            if runtime_section is None:
+                runtime_section = section_by_type.get(section_payload["section_type"])
+
+            for question in section_payload["questions"]:
+                TestQuestion.objects.create(
+                    test=test,
+                    question=question,
+                    section=runtime_section or question_sections.get(question.id),
+                )
 
         test.is_generated = True
         test.save(update_fields=["is_generated"])

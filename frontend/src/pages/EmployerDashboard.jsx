@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import DatePicker from "react-datepicker";
+import "react-datepicker/dist/react-datepicker.css";
 import { Link } from "react-router-dom";
 import EmployerTemplateConfigurator from "../components/EmployerTemplateConfigurator.jsx";
 import EmployerReportDrawer from "../components/EmployerReportDrawer.jsx";
@@ -21,9 +23,25 @@ const SIDEBAR_ITEMS = [
   { id: "results", label: "Results" },
   { id: "reports", label: "Reports" },
   { id: "live", label: "Live Test" },
+];
+
+const SIDEBAR_SECONDARY_ITEMS = [
   { id: "home", label: "Back to Home", href: "/" },
   { id: "logout", label: "Logout", href: "/logout/", forceReload: true }
 ];
+
+function formatScheduledStart(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
 
 function DashboardOverview({ summaryCards }) {
   return (
@@ -140,6 +158,8 @@ function AssignmentForm({
   availableTests,
   candidates,
   assigning,
+  assignError,
+  assignNotice,
   onAssign
 }) {
   return (
@@ -148,6 +168,18 @@ function AssignmentForm({
         <p className="text-sm font-bold uppercase tracking-[0.2em] text-emerald-600">Assignments</p>
         <h2 className="mt-2 text-3xl font-black text-slate-950">Test Assignment</h2>
       </div>
+
+      {assignNotice ? (
+        <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
+          {assignNotice}
+        </div>
+      ) : null}
+
+      {assignError ? (
+        <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-600">
+          {assignError}
+        </div>
+      ) : null}
 
       <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <div>
@@ -177,28 +209,37 @@ function AssignmentForm({
             onChange={(event) => setAssignmentForm((current) => ({ ...current, blueprintId: event.target.value, templateId: "", selectedTestKey: `blueprint-${event.target.value}` }))}
             className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-emerald-400 focus:bg-white"
           >
+            <option value="">Select Blueprint</option>
             {assessments.map((assessment) => <option key={assessment.id} value={assessment.id}>{assessment.title}</option>)}
           </select>
         </div>
         <div>
           <label className="mb-2 block text-sm font-semibold text-slate-700">Select Candidate(s)</label>
           <select value={assignmentForm.candidateId} onChange={(event) => setAssignmentForm((current) => ({ ...current, candidateId: event.target.value }))} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-emerald-400 focus:bg-white">
+            <option value="">Select Candidate</option>
             {candidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}
           </select>
         </div>
         <div>
-          <label className="mb-2 block text-sm font-semibold text-slate-700">Start Date</label>
-          <input type="date" value={(assignmentForm.scheduledStart || "").split("T")[0] || ""} onChange={(event) => setAssignmentForm((current) => ({ ...current, scheduledStart: `${event.target.value}T${((current.scheduledStart || "").split("T")[1] || "10:00")}` }))} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-emerald-400 focus:bg-white" />
-        </div>
-        <div>
-          <label className="mb-2 block text-sm font-semibold text-slate-700">Start Time</label>
-          <input type="time" value={((assignmentForm.scheduledStart || "").split("T")[1] || "10:00").slice(0, 5)} onChange={(event) => setAssignmentForm((current) => ({ ...current, scheduledStart: `${((current.scheduledStart || "").split("T")[0] || "2026-03-30")}T${event.target.value}` }))} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-emerald-400 focus:bg-white" />
+          <label className="mb-2 block text-sm font-semibold text-slate-700">Start Date & Time</label>
+          <DatePicker
+            selected={assignmentForm.scheduledStart}
+            onChange={(date) => setAssignmentForm((current) => ({ ...current, scheduledStart: date }))}
+            showTimeSelect
+            timeFormat="hh:mm aa"
+            timeIntervals={5}
+            dateFormat="dd/MM/yyyy hh:mm aa"
+            minDate={new Date()}
+            placeholderText="Select Start Date & Time"
+            className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-emerald-400 focus:bg-white"
+            wrapperClassName="block w-full"
+          />
         </div>
       </div>
 
       <div className="mt-4 max-w-xs">
         <label className="mb-2 block text-sm font-semibold text-slate-700">Duration</label>
-        <input type="number" min="10" value={assignmentForm.durationMinutes} onChange={(event) => setAssignmentForm((current) => ({ ...current, durationMinutes: event.target.value }))} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-emerald-400 focus:bg-white" />
+        <input type="number" min="10" value={assignmentForm.durationMinutes} placeholder="Enter duration" onChange={(event) => setAssignmentForm((current) => ({ ...current, durationMinutes: event.target.value }))} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-emerald-400 focus:bg-white" />
       </div>
 
       <div className="mt-6">
@@ -262,32 +303,31 @@ function CandidateResults({ assignments, loadingReportId, reportNotice, onOpenRe
   );
 }
 
-function ReportsPanel({ assignments, loadingReportId, onOpenReport }) {
-  const completedAssignments = assignments.filter((assignment) => assignment.status === "Completed");
+function ReportsPanel({ candidates, assignments, stats }) {
+  const statsMap = Object.fromEntries((stats || []).map((item) => [item.label, item.value]));
+  const completedTests = assignments.filter((assignment) => assignment.status === "Completed").length;
+  const expiredTests = assignments.filter((assignment) => assignment.status === "Expired").length;
+  const reportCards = [
+    { label: "Total Candidates", value: candidates.length },
+    { label: "Completed Tests", value: completedTests },
+    { label: "Expired Tests", value: expiredTests },
+    { label: "Average Score", value: statsMap["Avg Score"] || "N/A" },
+  ];
 
   return (
     <section className="rounded-[28px] bg-white p-6 shadow-lg shadow-slate-900/5">
       <div>
         <p className="text-sm font-bold uppercase tracking-[0.2em] text-emerald-600">Reports</p>
-        <h2 className="mt-2 text-3xl font-black text-slate-950">Detailed Candidate Reports</h2>
+        <h2 className="mt-2 text-3xl font-black text-slate-950">Reports Analytics</h2>
       </div>
 
-      <div className="mt-6 space-y-4">
-        {completedAssignments.length ? completedAssignments.map((assignment) => (
-          <div key={assignment.id} className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-100 bg-slate-50 p-4">
-            <div>
-              <p className="font-semibold text-slate-900">{assignment.candidate}</p>
-              <p className="mt-1 text-sm text-slate-500">{assignment.assessmentName}</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => void onOpenReport(assignment.id)}
-              className="rounded-full bg-slate-950 px-5 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
-            >
-              {loadingReportId === assignment.id ? "Loading..." : "Open Report"}
-            </button>
+      <div className="mt-6 grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+        {reportCards.map((item) => (
+          <div key={item.label} className="rounded-[24px] border border-slate-100 bg-slate-50 p-6">
+            <p className="text-sm text-slate-500">{item.label}</p>
+            <p className="mt-3 text-3xl font-black text-slate-950">{item.value}</p>
           </div>
-        )) : <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-4 text-sm text-slate-600">Completed candidate reports will appear here.</div>}
+        ))}
       </div>
     </section>
   );
@@ -352,13 +392,15 @@ function EmployerDashboard() {
   const [selectedReport, setSelectedReport] = useState(null);
   const [loadingReportId, setLoadingReportId] = useState(null);
   const [reportNotice, setReportNotice] = useState("");
+  const [assignNotice, setAssignNotice] = useState("");
+  const [assignError, setAssignError] = useState("");
   const [assignmentForm, setAssignmentForm] = useState({
     selectedTestKey: "",
     blueprintId: "",
     templateId: "",
     candidateId: "",
-    scheduledStart: "2026-03-30T10:00",
-    durationMinutes: "60"
+    scheduledStart: null,
+    durationMinutes: ""
   });
 
   useEffect(() => {
@@ -440,34 +482,17 @@ function EmployerDashboard() {
     return items;
   }, [assessments, templates]);
 
-  useEffect(() => {
-    if (!assessments.length && !templates.length && !candidates.length) {
-      return;
-    }
-
-    setAssignmentForm((current) => {
-      const selectedTest = availableTests.find((item) => item.key === current.selectedTestKey) || availableTests[0] || null;
-      return {
-        ...current,
-        selectedTestKey: current.selectedTestKey || selectedTest?.key || "",
-        blueprintId: current.blueprintId || String(selectedTest?.blueprintId || assessments[0]?.id || ""),
-        templateId: current.templateId || (selectedTest?.templateId ? String(selectedTest.templateId) : ""),
-        candidateId: current.candidateId || candidates[0]?.id || "",
-        durationMinutes: current.durationMinutes || String(selectedTest?.durationMinutes || assessments[0]?.durationMinutes || 60)
-      };
-    });
-  }, [assessments, templates, candidates, availableTests]);
-
   const summaryCards = useMemo(() => {
     const statsMap = Object.fromEntries((stats || []).map((item) => [item.label, item.value]));
+    const activeCandidates = assignments.filter((assignment) => assignment.status === "Active").length;
     const completedAssessments = assignments.filter((assignment) => assignment.status === "Completed").length;
 
     return [
       { label: "Total Tests", value: templates.length || assessments.length || statsMap["Assessments Created"] || 0 },
-      { label: "Active Candidates", value: candidates.length || statsMap["Candidates Assigned"] || 0 },
+      { label: "Active Candidates", value: activeCandidates || statsMap["Candidates Assigned"] || 0 },
       { label: "Completed Assessments", value: completedAssessments }
     ];
-  }, [stats, templates, assessments, candidates, assignments]);
+  }, [stats, templates, assessments, assignments]);
 
   const handleSaveTemplate = async (payload) => {
     setSavingTemplate(true);
@@ -476,13 +501,6 @@ function EmployerDashboard() {
     try {
       const created = await createEmployerTemplate(payload);
       setTemplates((current) => [created, ...current]);
-      setAssignmentForm((current) => ({
-        ...current,
-        selectedTestKey: `template-${created.id}`,
-        templateId: created.id,
-        blueprintId: created.blueprintId,
-        durationMinutes: String(created.totalDurationMinutes)
-      }));
       setActiveView("tests");
     } catch (templateError) {
       setError(templateError.message || "Unable to save test.");
@@ -494,23 +512,39 @@ function EmployerDashboard() {
 
   const handleAssign = async () => {
     if (!assignmentForm.blueprintId || !assignmentForm.candidateId || !assignmentForm.scheduledStart) {
-      setError("Blueprint, candidate, and start date are required.");
+      const message = "Please select a start date and time.";
+      setAssignError(message);
+      setAssignNotice("");
+      return;
+    }
+
+    const now = new Date();
+    if (assignmentForm.scheduledStart && new Date(assignmentForm.scheduledStart) < now) {
+      const message = "Cannot assign a test in the past. Please select a future date and time.";
+      setAssignError(message);
+      setAssignNotice("");
       return;
     }
 
     setAssigning(true);
     setError("");
+    setAssignError("");
+    setAssignNotice("");
 
     try {
       const created = await createEmployerAssignment({
         blueprintId: Number(assignmentForm.blueprintId),
         templateId: assignmentForm.templateId ? Number(assignmentForm.templateId) : null,
         candidateId: Number(assignmentForm.candidateId),
-        scheduledStart: assignmentForm.scheduledStart,
+        scheduledStart: formatScheduledStart(assignmentForm.scheduledStart),
         durationMinutes: Number(assignmentForm.durationMinutes)
       });
       setAssignments((current) => [created, ...current]);
-      setActiveView("results");
+      setAssignNotice("Test assigned successfully.");
+      setAssignmentForm((current) => ({
+        ...current,
+        scheduledStart: null,
+      }));
     } catch (assignError) {
       setError(assignError.message || "Unable to assign assessment.");
     } finally {
@@ -562,13 +596,15 @@ function EmployerDashboard() {
             availableTests={availableTests}
             candidates={candidates}
             assigning={assigning}
+            assignError={assignError}
+            assignNotice={assignNotice}
             onAssign={handleAssign}
           />
         );
       case "results":
         return <CandidateResults assignments={assignments} loadingReportId={loadingReportId} reportNotice={reportNotice} onOpenReport={openReport} />;
       case "reports":
-        return <ReportsPanel assignments={assignments} loadingReportId={loadingReportId} onOpenReport={openReport} />;
+        return <ReportsPanel candidates={candidates} assignments={assignments} stats={stats} />;
       case "live":
         return <LiveMonitoringTable liveMonitoring={liveMonitoring} />;
       case "settings":
@@ -581,52 +617,62 @@ function EmployerDashboard() {
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.12),_transparent_32%),linear-gradient(180deg,_#f8fafc_0%,_#eef2ff_100%)] px-4 py-8">
       <div className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-[260px_1fr]">
-        <aside className="rounded-[32px] bg-slate-950 p-6 text-white shadow-2xl shadow-slate-900/20">
-          <div className="border-b border-white/10 pb-6">
-            <p className="text-sm font-bold uppercase tracking-[0.2em] text-emerald-400">Employer Workspace</p>
-            <h1 className="mt-3 text-2xl font-black">Assessment Hub</h1>
-            <p className="mt-3 text-sm text-slate-300">Navigate tests, assignments, results, and live monitoring from one control panel.</p>
+        <aside className="rounded-[32px] bg-white p-6 text-slate-900 shadow-[0_10px_25px_rgba(0,0,0,0.08)]">
+          <div className="border-b border-slate-200 pb-6">
+            <p className="text-sm font-bold uppercase tracking-[0.2em] text-emerald-600">Employer Workspace</p>
+            <h1 className="mt-3 text-2xl font-black text-slate-950">Assessment Hub</h1>
+            <p className="mt-3 text-sm text-slate-500">Navigate tests, assignments, results, and live monitoring from one control panel.</p>
           </div>
 
-          <nav className="mt-6 space-y-2">
-            {SIDEBAR_ITEMS.map((item) => {
-              const active = activeView === item.id;
-              if (item.href) {
-                if (item.forceReload) {
-                  return (
-                    <a
-                      key={item.id}
-                      href={item.href}
-                      className="mt-6 flex w-full items-center justify-between rounded-2xl border border-white/10 px-4 py-3 text-left text-sm font-semibold text-slate-200 transition hover:bg-white/5"
-                    >
-                      <span>{item.label}</span>
-                    </a>
-                  );
-                }
+          <nav className="mt-6">
+            <div className="space-y-3">
+              {SIDEBAR_ITEMS.map((item) => {
+                const active = activeView === item.id;
                 return (
-                  <Link
+                  <button
                     key={item.id}
-                    to={item.href}
-                    className="flex w-full items-center justify-between rounded-2xl px-4 py-3 text-left text-sm font-semibold text-slate-200 transition hover:bg-white/5"
+                    type="button"
+                    onClick={() => setActiveView(item.id)}
+                    className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left text-sm font-semibold transition ${
+                      active
+                        ? "border-emerald-500 bg-slate-100 text-emerald-600"
+                        : "border-slate-200 bg-slate-100 text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+                    }`}
                   >
                     <span>{item.label}</span>
-                  </Link>
+                    {active ? <span className="text-xs uppercase tracking-[0.18em]">Open</span> : null}
+                  </button>
                 );
-              }
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setActiveView(item.id)}
-                  className={`flex w-full items-center justify-between rounded-2xl px-4 py-3 text-left text-sm font-semibold transition ${
-                    active ? "bg-emerald-500 text-slate-950" : "text-slate-200 hover:bg-white/5"
-                  }`}
-                >
-                  <span>{item.label}</span>
-                  {active ? <span className="text-xs uppercase tracking-[0.18em]">Open</span> : null}
-                </button>
-              );
-            })}
+              })}
+            </div>
+
+            <div className="mt-8 border-t border-slate-200 pt-6 space-y-3">
+              {SIDEBAR_SECONDARY_ITEMS.map((item) => {
+                if (item.href) {
+                  if (item.forceReload) {
+                    return (
+                      <a
+                        key={item.id}
+                        href={item.href}
+                        className="flex w-full items-center justify-between rounded-full bg-slate-950 px-5 py-3 text-left text-sm font-semibold text-white transition hover:bg-slate-800"
+                      >
+                        <span>{item.label}</span>
+                      </a>
+                    );
+                  }
+                  return (
+                    <Link
+                      key={item.id}
+                      to={item.href}
+                      className="flex w-full items-center justify-between rounded-full border border-slate-300 bg-white px-5 py-3 text-left text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
+                    >
+                      <span>{item.label}</span>
+                    </Link>
+                  );
+                }
+                return null;
+              })}
+            </div>
           </nav>
         </aside>
 

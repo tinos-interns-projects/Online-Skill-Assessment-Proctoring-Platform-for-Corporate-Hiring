@@ -11,6 +11,7 @@ urlpatterns = [
     path('api/employer/templates/', views.employer_templates_api, name='api_employer_templates'),
     path('api/employer/assignments/', views.employer_assignments_api, name='api_employer_assignments'),
     path('api/employer/assignments/<int:assignment_id>/report/', views.employer_assignment_report_api, name='api_employer_assignment_report'),
+    path('api/candidate/dashboard/', views.candidate_dashboard_api, name='api_candidate_dashboard'),
     path('api/candidates/', views.candidates_api, name='api_candidates'),
     path('api/employers/', views.employers_api, name='api_employers'),
     path('api/questions/', exam_api.questions_api, name='api_questions'),

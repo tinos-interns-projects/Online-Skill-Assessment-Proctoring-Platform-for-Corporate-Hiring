@@ -9,11 +9,13 @@ from django.utils import timezone
 
 from core.models import (
     Answer,
+    Attempt,
     CandidateActivity,
     CodingEvaluation,
     EmployerAssessmentTemplate,
     EmployerAssessmentTemplateSection,
     Question,
+    Result,
     Section,
     Test,
     TestAssignment,
@@ -159,7 +161,7 @@ def create_test_assignment(*, employer, candidate, blueprint, template, schedule
     )
 
     if request and candidate.email:
-        invitation_link = request.build_absolute_uri(f"/invite/{token.token}/")
+        invitation_link = f"{settings.FRONTEND_URL}/invite/{token.token}"
         send_mail(
             subject="Online Assessment Invitation",
             message=(
@@ -176,18 +178,33 @@ def create_test_assignment(*, employer, candidate, blueprint, template, schedule
     return assignment
 
 
-def assignment_status(assignment):
-    test = assignment.test
-    active_attempt = test.attempt_set.order_by("-started_at").first()
-    now = timezone.now()
+def get_test_end_time(test):
+    if test.scheduled_end:
+        return test.scheduled_end
+    if test.scheduled_start:
+        return test.scheduled_start + timedelta(minutes=test.duration_minutes or 0)
+    return None
 
-    if test.is_completed:
+
+def calculate_test_status(test, now=None):
+    now = now or timezone.now()
+    latest_attempt = test.attempt_set.order_by("-started_at").first()
+    result_exists = Result.objects.filter(test=test).exists()
+    end_time = get_test_end_time(test)
+
+    if result_exists or test.is_completed:
         return "Completed"
-    if active_attempt and not active_attempt.is_completed:
+    if latest_attempt and not latest_attempt.is_completed and (end_time is None or now <= end_time):
         return "In Progress"
     if test.scheduled_start and now < test.scheduled_start:
-        return "Not Started"
-    return "Scheduled"
+        return "Scheduled"
+    if end_time and now > end_time:
+        return "Expired"
+    return "Active"
+
+
+def assignment_status(assignment):
+    return calculate_test_status(assignment.test)
 
 
 def serialize_assignment(assignment):
