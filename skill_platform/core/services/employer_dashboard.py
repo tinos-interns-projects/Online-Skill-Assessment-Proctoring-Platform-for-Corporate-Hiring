@@ -102,14 +102,31 @@ def _select_questions_for_section(blueprint, section_config, used_ids):
 @transaction.atomic
 def create_test_assignment(*, employer, candidate, blueprint, template, scheduled_start, duration_minutes, request=None):
     scheduled_end = scheduled_start + timedelta(minutes=duration_minutes)
-    test = Test.objects.create(
+
+    # 🔍 Check if test already exists for this candidate + blueprint
+    test = Test.objects.filter(
+       blueprint=blueprint,
+       user=candidate,
+       is_completed=False
+    ).order_by("-id").first()
+
+    # 🆕 If not found → create new
+    if not test:
+        test = Test.objects.create(
         blueprint=blueprint,
         user=candidate,
         scheduled_start=scheduled_start,
         scheduled_end=scheduled_end,
         duration_minutes=duration_minutes,
         is_generated=True,
-    )
+      )
+    else:
+        # 🔥 FIX: UPDATE EXISTING TEST
+        test.scheduled_start = scheduled_start
+        test.scheduled_end = scheduled_end
+        test.duration_minutes = duration_minutes
+        test.save()
+      
 
     section_configs = list(template.sections.order_by("order", "id")) if template else []
     if not section_configs:
@@ -127,22 +144,37 @@ def create_test_assignment(*, employer, candidate, blueprint, template, schedule
             )
 
     used_question_ids = set()
-    for index, section_config in enumerate(section_configs):
-        test_section = Section.objects.create(
-            test=test,
-            blueprint_section=section_config.blueprint_section,
-            section_type=section_config.section_type,
-            title=section_config.title,
-            order=section_config.order or (index + 1),
-            time_limit_minutes=section_config.time_limit_minutes,
-        )
 
-        for question in _select_questions_for_section(blueprint, section_config, used_question_ids):
-            TestQuestion.objects.create(
+    # 🔍 check once (outside loop)
+    existing_questions = TestQuestion.objects.filter(test=test).exists()
+
+    existing_sections = Section.objects.filter(test=test).exists()
+
+    for index, section_config in enumerate(section_configs):
+        if not existing_sections:
+            test_section = Section.objects.create(
                 test=test,
-                section=test_section,
-                question=question,
+                blueprint_section=section_config.blueprint_section,
+                section_type=section_config.section_type,
+                title=section_config.title,
+                order=section_config.order or (index + 1),
+                time_limit_minutes=section_config.time_limit_minutes,
             )
+        else:
+            test_section = Section.objects.filter(
+                test=test,
+                section_type=section_config.section_type
+            ).first()
+
+
+        if not existing_questions:
+            for question in _select_questions_for_section(blueprint, section_config, used_question_ids):
+                TestQuestion.objects.create(
+                    test=test,
+                    section=test_section,
+                    question=question,
+                )
+            
 
     assignment = TestAssignment.objects.create(
         employer=employer,

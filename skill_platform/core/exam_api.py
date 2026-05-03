@@ -125,7 +125,7 @@ def get_assessment_questions(blueprint):
 
 def get_or_create_exam_session(user, blueprint):
     now = timezone.now()
-    duration_minutes = blueprint.duration_minutes or 60
+
     active_test = (
         Test.objects.filter(user=user, blueprint=blueprint, is_completed=False)
         .order_by("-started_at")
@@ -133,22 +133,15 @@ def get_or_create_exam_session(user, blueprint):
     )
 
     if not active_test:
-        active_test = Test.objects.create(
-            blueprint=blueprint,
-            user=user,
-            duration_minutes=duration_minutes,
-            scheduled_start=now,
-            scheduled_end=now + timedelta(minutes=duration_minutes),
-            is_generated=True,
-            is_completed=False,
-        )
+        return None, None   # No test assigned
 
     attempt = (
         Attempt.objects.filter(user=user, test=active_test, is_completed=False)
         .order_by("-started_at")
         .first()
     )
-    if not attempt and not active_test.is_completed:
+
+    if not attempt:
         attempt = Attempt.objects.create(user=user, test=active_test, is_completed=False)
 
     return active_test, attempt
@@ -202,18 +195,31 @@ def serialize_test_question(test_question):
     correct_index = OPTION_LETTER_TO_INDEX.get((question.correct_option or "").lower())
 
     return {
-        "id": question.id,
-        "question": question.question_text,
-        "type": question_type,
-        "difficulty": (question.difficulty or "medium").title(),
-        "options": options if question_type == "mcq" else [],
-        "answer": correct_index,
-        "correctOption": correct_index,
-        "explanation": question.explanation or "",
-        "sampleInput": question.sample_input or "",
-        "sampleOutput": question.sample_output or "",
-        "sectionType": test_question.section.section_type if test_question.section else (question.section_type or ""),
-        "sectionTitle": test_question.section.title if test_question.section else "",
+       "id": question.id,
+       "question": question.question_text,
+       "type": question_type,
+
+       "sectionId": test_question.section.id if test_question.section else None,
+
+       "sectionType": (
+           test_question.section.section_type.lower()
+           if test_question.section and test_question.section.section_type
+           else ""
+       ),
+
+       "sectionTitle": (
+           test_question.section.title
+           if test_question.section
+           else ""
+       ),
+
+       "difficulty": (question.difficulty or "medium").title(),
+       "options": options if question_type == "mcq" else [],
+       "answer": correct_index,
+       "correctOption": correct_index,
+       "explanation": question.explanation or "",
+       "sampleInput": question.sample_input or "",
+       "sampleOutput": question.sample_output or "",
     }
 
 
@@ -399,6 +405,11 @@ def get_section_attempts_with_current(attempt, now=None):
     now = now or timezone.now()
     current_section_attempt = sync_current_section(attempt, now)
     section_attempts = ensure_attempt_sections(attempt)
+    
+    current_section_attempt = next(
+        (s for s in section_attempts if not s.completed_at),
+        section_attempts[0] if section_attempts else None
+    )
 
     while current_section_attempt:
         has_questions = TestQuestion.objects.filter(test=attempt.test, section=current_section_attempt.section).exists()
@@ -579,7 +590,9 @@ def questions_api(request):
         test, attempt = get_or_create_exam_session(user, blueprint)
 
     # ---------- GENERATE QUESTIONS ----------
-    test_questions = ensure_test_structure(test, blueprint)
+    test_questions = TestQuestion.objects.filter(
+        test=test
+    ).select_related("question", "section")
 
     if not test_questions:
         return Response({"detail": "No questions are available right now."}, status=404)
@@ -622,21 +635,29 @@ def questions_api(request):
     selected_section_attempt = current_section_attempt
 
     if requested_section_id:
-        selected_section_attempt = next(
-            (item for item in section_attempts if str(item.section_id) == str(requested_section_id)),
-            current_section_attempt,
-        )
+       requested = next(
+           (item for item in section_attempts if str(item.section_id) == str(requested_section_id)),
+           None,
+       )
 
-        if not is_section_accessible(selected_section_attempt, current_section_attempt):
-            return Response(
-                {"detail": "Complete the current section before moving ahead."},
-                status=403,
-            )
+       # 🚨 ONLY allow if it's the current section
+       if requested:
+            selected_section_attempt = requested
+       else:
+            selected_section_attempt = current_section_attempt
+           
 
-    active_test_questions = [
-        item for item in test_questions
-        if item.section_id == selected_section_attempt.section_id
-    ]
+
+       print("DEBUG SECTION ACCESS:", selected_section_attempt.id, current_section_attempt.id)
+       #if not is_section_accessible(selected_section_attempt, current_section_attempt):
+            #return Response(
+                #{"detail": "Complete the current section before moving ahead."},
+                #status=403,
+            #)
+
+    active_test_questions = test_questions.filter(
+        section_id=selected_section_attempt.section.id
+    )
 
     response_sections = [
         serialize_section_attempt(item, current_section_attempt, now)
@@ -777,21 +798,43 @@ def submit_test_api(request):
 
     if not isinstance(answers, dict):
         return Response({"detail": "Answers payload must be an object."}, status=400)
+    
+        attempt = None
 
-    user = resolve_api_user(request)
+    if attempt_id:
+        try:
+            attempt = Attempt.objects.select_related("test").get(id=attempt_id)
+        except Attempt.DoesNotExist:
+            return Response({"detail": "Invalid attempt"}, status=400)
+
+    if not attempt:
+        return Response({"detail": "Missing attemptId"}, status=400)
+
+    user = attempt.user
+    test = attempt.test
+    blueprint = test.blueprint
+
+    print("ATTEMPT:", attempt)
+    print("ATTEMPT ID:", attempt_id)
+
+    
+
     general_skill, _ = Skill.objects.get_or_create(name="General")
 
-    attempt = resolve_attempt(request, attempt_id)
-    if attempt:
-        test = attempt.test
-        blueprint = test.blueprint
-    else:
-        blueprint = resolve_assessment(assessment_id)
-        if not blueprint:
-            return Response({"detail": "Unable to resolve an assessment for submission."}, status=400)
-        test, attempt = get_or_create_exam_session(user, blueprint)
+    
+    
+    if not blueprint:
+       return Response({"detail": "Unable to resolve an assessment for submission."}, status=400)
+    test, attempt = get_or_create_exam_session(user, blueprint)
 
-    test_questions = ensure_test_structure(test, blueprint)
+    ensure_test_structure(test, blueprint)  # keep this for setup
+
+    test_questions = TestQuestion.objects.filter(
+        test=test
+    ).select_related("question", "section")
+
+
+
     if not test_questions:
         return Response({"detail": "Unable to resolve assessment questions for submission."}, status=400)
 

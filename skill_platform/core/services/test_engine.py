@@ -67,11 +67,19 @@ def generate_test_questions(test):
             if runtime_section is None:
                 runtime_section = section_by_type.get(section_payload["section_type"])
 
-            for question in section_payload["questions"]:
+            
+
+            # 🔥 Always match section using section_type (safe)
+                section_type = section_payload["section_type"]
+                runtime_section = section_by_type.get(section_type)
+
+                for question in section_payload["questions"]:
+                    print("Q:", question.id, "| TYPE:", section_type, "| SECTION:", runtime_section)
+
                 TestQuestion.objects.create(
-                    test=test,
-                    question=question,
-                    section=runtime_section or question_sections.get(question.id),
+                   test=test,
+                   question=question,
+                   section=runtime_section,
                 )
 
         test.is_generated = True

@@ -22,7 +22,7 @@ def option_letter_to_index(value):
 class QuestionSerializer(serializers.ModelSerializer):
     question = serializers.CharField(source="question_text")
     options = serializers.SerializerMethodField()
-    sectionType = serializers.CharField(source="section_type", allow_blank=True)
+    sectionType = serializers.CharField(source="section_type", allow_null=True, default="")
 
     class Meta:
         model = Question

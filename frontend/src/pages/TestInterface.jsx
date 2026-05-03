@@ -8,22 +8,56 @@ import { detectFace, getQuestions, logViolation, submitTest, uploadScreenshot } 
 const ACTIVE_TAB_KEY = "skillassess-active-exam-tab";
 
 function normalizeQuestion(question, index) {
-  const fallbackType = Array.isArray(question?.options) && question.options.length ? "mcq" : "descriptive";
-  const type = question?.type || fallbackType;
-
   return {
-    ...question,
-    id: question?.id ?? `question-${index + 1}`,
-    type,
-    question: question?.question || `Question ${index + 1}`,
-    options: type === "mcq" ? (Array.isArray(question?.options) ? question.options : []) : [],
-    answer: question?.answer ?? question?.correctOption
+    id: question.id ?? `question-${index + 1}`,
+    question: question.question || question.question_text,
+    options: Array.isArray(question.options) ? question.options : [],
+    type: question.type || "mcq",
+    answer: question.answer ?? question.correctOption,
+
+    // 🔥 IMPORTANT FIX
+    sectionId: question.sectionId,
+    sectionType: question.sectionType
   };
 }
 
 function TestInterface() { 
   const navigate = useNavigate();
   const { token } = useParams();
+
+  useEffect(() => {
+    if (token) {
+      console.log("Calling invite API with token:", token);
+
+      fetch(`http://127.0.0.1:8000/api/invite/${token}/`)
+        .then(res => res.json())
+        .then(data => {
+          console.log("Invite API response:", data);
+
+          if (data.error) {
+            setError("Invalid invitation link");
+            return;
+          }
+
+          setAssessment({
+            title: data.title,
+            scheduledStart: data.scheduledStart,
+            scheduledEnd: data.scheduledEnd,
+            attemptId: data.attemptId
+          });
+
+          loadAssessment(undefined, data.attemptId);
+
+
+        })
+        .catch(err => {
+          console.error(err);
+          setError("Failed to load invitation");
+        });
+    }
+  }, [token]);
+
+
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const submittedRef = useRef(false);
@@ -50,6 +84,15 @@ function TestInterface() {
   const [examNotStarted, setExamNotStarted] = useState(false);
   const [scheduledStart, setScheduledStart] = useState(null);
   const [countdown, setCountdown] = useState(null);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [confirmLabel, setConfirmLabel] = useState("");
+  const [timeLeft, setTimeLeft] = useState(0);
+
+
+
+
+
+
   
   useEffect(() => {
     if (!examNotStarted) return;
@@ -114,7 +157,7 @@ function TestInterface() {
 
     const response = await getQuestions({
       token,
-    ...(sectionId ? { section_id: sectionId } : {})
+      ...(sectionId ? { section_id: sectionId } : {})
     });
 
 
@@ -135,15 +178,15 @@ function TestInterface() {
     const nextSections = response?.sections || [];
     let nextActiveSection = null;
 
-    // ✅ If loading next section → use sectionId
     if (sectionId) {
-      nextActiveSection =
-        response?.activeSection ||
-        nextSections.find((section) => String(section.id) === String(sectionId));
+      // ✅ ONLY use sectionId (IGNORE backend activeSection)
+      nextActiveSection = nextSections.find(
+        (section) => String(section.id) === String(sectionId)
+     );
     } else {
-    // ✅ First time → always start from first section
-        nextActiveSection = nextSections[0] || null;
-    }
+      // ✅ Always start from first section
+      nextActiveSection = nextSections[0] || null;
+   }
 
     setAssessment({
       id: response?.assessmentId ?? null,
@@ -233,14 +276,23 @@ function TestInterface() {
 
   const finalizeWholeAssessment = async (options = {}) => {
 
-  // ✅ ONLY duplicate protection here
+  // 🚫 Block duplicate submit
   if (submittedRef.current || submittingRef.current) {
-    console.log("⛔ BLOCKED duplicate submit");
+    console.log("🚫 BLOCKED duplicate submit");
     return;
   }
 
-  // ✅ separate validation
-  if (!assessment?.attemptId) return;
+  // 🚫 Block invalid state
+  if (!assessment?.attemptId) {
+    console.log("🚫 No attemptId — blocking submit");
+    return;
+  }
+
+  // 🚫 Block if no active section
+  if (!activeSection?.id) {
+    console.log("🚫 No active section — blocking submit");
+    return;
+  }
 
   submittingRef.current = true;
   setIsSubmitting(true);
@@ -250,6 +302,7 @@ function TestInterface() {
         assessmentId: assessment.id,
         testId: assessment.testId,
         attemptId: assessment.attemptId,
+        sectionId: activeSection.id, 
         answers,
         timeTaken: Math.max(assessment.durationSeconds - timeLeftRef.current, 0),
         violationsCount: violations,
@@ -298,48 +351,18 @@ function TestInterface() {
         assessmentId: assessment.id,
         testId: assessment.testId,
         attemptId: assessment.attemptId,
-        sectionId: activeSection?.id,
+        sectionId: activeSection.id,
         answers: buildSectionAnswerPayload(),
         timeTaken: Math.max(((activeSection.timeLimitMinutes || assessment.durationMinutes || 20) * 60) - timeLeftRef.current, 0),
         violationsCount: violations,
         autoSubmitted: options.autoSubmitted
       });
 
-      if (response?.status === "section_saved" && response?.nextSectionId) {
-        setActiveSection(null);
-        setQuestions([]);
-        setCurrentQuestion(0);
-        await loadAssessment(response.nextSectionId);
-        setStatusMessage(options.message || `${activeSection.title} submitted. Moving to the next section.`);
-        return;
+      if (response?.status === "section_saved") {
+        console.log("SUBMIT RESPONSE:", response);
       }
+        
 
-      submittedRef.current = true;
-      setHasSubmitted(true);
-
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop());
-      }
-
-      const activeTab = localStorage.getItem(ACTIVE_TAB_KEY);
-      if (activeTab) {
-        try {
-          const parsed = JSON.parse(activeTab);
-          if (parsed.id === tabIdRef.current) {
-            localStorage.removeItem(ACTIVE_TAB_KEY);
-          }
-        } catch (storageError) {
-          localStorage.removeItem(ACTIVE_TAB_KEY);
-        }
-      }
-
-      navigate("/result", {
-        state: {
-          resultId: response.resultId,
-          submissionResult: response,
-          autoSubmittedMessage: options.autoSubmitted ? options.message : ""
-        }
-      });
     } catch (submitError) {
       setStatusMessage(submitError.message || "Unable to submit section.");
       setError(submitError.message || "Unable to submit section.");
@@ -350,29 +373,30 @@ function TestInterface() {
   };
 
   const confirmAndSubmit = async () => {
-    if (hasSubmitted || isSubmitting) {
-      return;
-    }
+    if (hasSubmitted || isSubmitting) return;
 
-    const label = isFinalSection ? "submit your test" : `submit the ${activeSection?.title || "current"} section`;
-    const confirmed = window.confirm(`Are you sure you want to ${label}?`);
-    if (!confirmed) {
-      return;
-    }
+    const label = isFinalSection
+      ? "submit your test"
+      : `submit the ${activeSection?.title || "current"} section`;
 
-    await submitCurrentSection({
-      message: isFinalSection ? "Submitting final section..." : `Submitting ${activeSection?.title || "section"}...`
-    });
+    setConfirmLabel(label);
+    setShowConfirm(true);
   };
 
-  useEffect(() => {
-    const loadQuestions = async () => {
-      setLoading(true);
-      setError("");
-      setStatusMessage("");
 
-      try {
-        await loadAssessment();
+  useEffect(() => {
+  const loadQuestions = async () => {
+    setLoading(true);
+    setError("");
+    setStatusMessage("");
+
+    try {
+      
+      
+
+      await loadAssessment();
+
+
       } catch (loadError) {
         setError(loadError.message || "Unable to load questions.");
       } finally {
@@ -387,8 +411,9 @@ function TestInterface() {
     let isMounted = true;
 
     const startCamera = async () => {
+      console.log("🎥 Starting camera..."); 
       if (!navigator.mediaDevices?.getUserMedia) {
-        registerViolation("Warning: camera access is unavailable.", "camera-unavailable", "CAMERA_UNAVAILABLE");
+        console.log("Camera not supported");
         return;
       }
 
@@ -409,7 +434,7 @@ function TestInterface() {
           track.onended = () => registerViolation("Warning: camera was turned off.", "camera-ended", "CAMERA_OFF");
         });
       } catch (cameraError) {
-        registerViolation("Warning: camera access is unavailable.", "camera-error", "CAMERA_ERROR");
+          console.log("Camera error:", cameraError);
       }
     };
 
@@ -426,12 +451,14 @@ function TestInterface() {
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.hidden) {
+        if (!assessment?.attemptId || hasSubmitted) return;
         registerViolation("Warning: tab switching detected.", "tab-switch", "TAB_SWITCH");
       }
     };
 
     const handleWindowBlur = () => {
       if (!document.hidden) {
+        if (!assessment?.attemptId || hasSubmitted) return;
         registerViolation("Warning: window focus lost.", "window-blur", "WINDOW_BLUR");
       }
     };
@@ -515,7 +542,7 @@ function TestInterface() {
         localStorage.removeItem(ACTIVE_TAB_KEY);
       }
     };
-  }, [questions.length, assessment?.attemptId]);
+  }, []);
 
   useEffect(() => {
     if (!assessment?.attemptId || !cameraReady || hasSubmitted) {
@@ -571,11 +598,13 @@ function TestInterface() {
 
     const scheduleInterval = window.setInterval(() => {
       if (Date.now() >= new Date(assessment.scheduledEnd).getTime()) {
-        void finalizeWholeAssessment({
-          autoSubmitted: true,
-          message: "Assessment time ended",
-          autoSubmitReason: "timeout"
-        });
+        if (!submittedRef.current && !submittingRef.current) {
+          finalizeWholeAssessment({
+            autoSubmitted: true,
+            message: "Assessment time ended",
+            autoSubmitReason: "timeout"
+          });
+        }
       }
     }, 1000);
 
@@ -587,8 +616,8 @@ function TestInterface() {
       violations >= 3 &&
       !submittedRef.current &&
       !submittingRef.current &&
-      assessment?.attemptId &&
-      activeSection?.id
+      assessment?.attemptId
+
     ) {
       finalizeWholeAssessment({
         autoSubmitted: true,
@@ -596,7 +625,7 @@ function TestInterface() {
         autoSubmitReason: "violations"
       });
     }
-  }, [violations]);
+  }, [violations, assessment?.attemptId]);
 
 
   // Loading
@@ -613,215 +642,345 @@ function TestInterface() {
     return <p className="p-6 text-sm">Loading assessment...</p>;
   }
 
-  // ✅ HANDLE EXAM NOT STARTED
-  if (!questions.length && assessment?.scheduledStart) {
-    const startTime = new Date(assessment.scheduledStart).getTime();
-    const now = Date.now();
-
-    if (now < startTime) {
-      const seconds = Math.floor((startTime - now) / 1000);
-
-      return (
-        <div style={{ textAlign: "center", marginTop: "150px" }}>
-          <h2>Exam not started yet</h2>
-          <h3>Starting in {seconds} seconds</h3>
-        </div>
-      );
-    }
-  }
-
-  // fallback
-  if (!questions.length) {
-    return <p>No questions available</p>;
-  }
-
-
- return (
-  <>
-    {/* Show loading if section not ready */}
-    {!activeSection ? (
-      <p>Loading test...</p>
-    ) : examNotStarted ? (
-      <div style={{ textAlign: "center", marginTop: "150px" }}>
+  // ✅ HANDLE EXAM NOT STARTED 
+if (examNotStarted) {
+  return (
+    <div style={{
+      width: "100%",
+      height: "100vh",
+      display: "flex",
+      justifyContent: "center",
+      alignItems: "center"
+    }}>
+      <div style={{ textAlign: "center" }}>
         <h2>Exam not started yet</h2>
         <h3>Starting in {countdown}</h3>
       </div>
-    ) : (
-      <TimerSystem
-        key={activeSection.id}
-        durationSeconds={activeSectionDurationSeconds}
-        isRunning={
-          !hasSubmitted &&
-          !isSubmitting &&
-          !examNotStarted &&
-          activeSection?.id &&
-          assessment?.attemptId &&
-          activeSectionDurationSeconds > 0
-        }
+    </div>
+  );
+}
 
-        onExpire={() => {
-          console.log("⛔ onExpire triggered");
+      return (
+  <div style={{
+    width: "100%",
+    minHeight: "100vh",
+    display: "flex",
+    justifyContent: "flex-start",
+    alignItems: "flex-start",
+    padding: "0"
+  }}>
+    <div style={{ width: "100%" }}>
 
-          if (!activeSection?.id) return;
-          if (!assessment?.attemptId) return;
-          if (examNotStarted) return;
-          if (hasSubmitted || isSubmitting) return;
+      {/* Show loading if section not ready */}
+      {!activeSection ? (
+        <p>Loading test...</p>
 
-          // ✅ prevents auto loop
-          if (sectionSubmittingRef.current) return;
+      ) : examNotStarted ? (
 
-          if (timeLeftRef.current <= 0) return;
+        <div style={{
+          width: "100%",
+          height: "100vh",
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          alignItems: "center"
+        }}>
+          <h2 style={{ fontSize: "28px", marginBottom: "10px" }}>
+            Exam not started yet
+          </h2>
 
-          submitCurrentSection({
-              autoSubmitted: true,
-              message: `${activeSection.title} time ended. Moving ahead automatically.`,
-          });
-        }}
-      >
-        {({ formattedTime, timeLeft }) => {
-          timeLeftRef.current = timeLeft;
+          <h3 style={{ fontSize: "20px", color: "#555" }}>
+            Starting in {countdown}
+          </h3>
+        </div>
+    
 
-          return (
-            <div className="min-h-screen bg-slate-50 px-4 py-10">
-              <div className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-[1fr_320px]">
-                <section className="rounded-[28px] bg-white p-6 shadow-lg shadow-slate-900/5">
-                  {statusMessage && (
-                    <p className="mb-6 text-sm font-semibold text-rose-600">
-                      {statusMessage}
-                    </p>
-                  )}
+      ) : (
 
-                  <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-6">
-                    <div>
-                      <p className="text-sm font-bold uppercase tracking-[0.2em] text-emerald-600">
-                        Test Interface
+        <TimerSystem
+          key={activeSection.id}
+          durationSeconds={activeSectionDurationSeconds}
+          isRunning={
+            !hasSubmitted &&
+            !isSubmitting &&
+            !examNotStarted &&
+            activeSection?.id &&
+            assessment?.attemptId &&
+            activeSectionDurationSeconds > 0
+          }
+          onExpire={async () => {
+  console.log("⏱ Section time over");
+
+  if (!activeSection?.id) return;
+  if (!assessment?.attemptId) return;
+  if (examNotStarted) return;
+  if (hasSubmitted || isSubmitting) return;
+  if (sectionSubmittingRef.current) return;
+
+  // ✅ Submit section
+  await submitCurrentSection({
+    autoSubmitted: true,
+    message: `${activeSection.title} time ended. Moving ahead automatically.`,
+  });
+
+  // ✅ Find next section manually
+  const currentIndex = sections.findIndex(
+    (s) => String(s.id) === String(activeSection.id)
+  );
+
+  const nextSection = sections[currentIndex + 1];
+
+  if (nextSection) {
+    console.log("➡ Moving to next section:", nextSection.title);
+
+    setActiveSection(nextSection);
+    setCurrentQuestion(0);
+
+    // 🔥 IMPORTANT: load new questions
+    await loadAssessment(nextSection.id);
+
+  } else {
+    console.log("🚀 Last section → submitting full test");
+
+    await finalizeWholeAssessment({
+      autoSubmitted: true,
+      autoSubmitReason: "section_timeout"
+    });
+  }
+}}
+        >
+          {({ formattedTime, timeLeft }) => {
+            timeLeftRef.current = timeLeft;
+
+            console.log("QUESTIONS:", questions);
+
+            const sectionQuestions = questions.filter((q) => {
+              const qType = (q.sectionType || "").toLowerCase().trim();
+              const activeType = (activeSection.sectionType || "").toLowerCase().trim();
+
+              return qType === activeType;
+            });
+
+            console.log("FIRST QUESTION:", sectionQuestions[0]);
+            
+
+            console.log("ACTIVE SECTION:", activeSection);
+            console.log("ALL QUESTIONS:", questions);
+            console.log("FILTERED QUESTIONS:", sectionQuestions);
+            
+            console.log("Q sectionType:", questions.map(q => q.sectionType));
+            console.log("Active section title:", activeSection?.title);
+            console.log("Filtered:", sectionQuestions);
+
+            return (
+              <div className="min-h-screen w-full bg-slate-50 p-6">
+                {/* 🔥 FIXED WIDTH ISSUE HERE */}
+                <div 
+                  className="grid w-full gap-6 lg:grid-cols-[1fr_320px]" 
+                  style={{ width: "100%" }}
+                >
+
+                  {/* LEFT PANEL */}
+                  <section className="rounded-[28px] bg-white p-6 shadow-lg">
+                    {statusMessage && (
+                      <p className="mb-6 text-sm font-semibold text-rose-600">
+                        {statusMessage}
                       </p>
-                      <h1 className="mt-2 text-3xl font-black text-slate-950">
-                        {assessment.title}
-                      </h1>
-                      <p className="mt-3 text-sm font-semibold text-slate-500">
-                        {activeSection.title} section
-                      </p>
-                    </div>
+                    )}
 
-                    <div className="flex flex-wrap items-center gap-3">
-                      <div className="rounded-full bg-slate-50 px-5 py-2 text-sm font-semibold text-slate-700">
-                        Question {currentQuestion + 1}/{questions.length}
-                      </div>
-                      <div className="rounded-full bg-slate-50 px-5 py-2 text-sm font-semibold text-slate-700">
-                        Violations: {violations}
-                      </div>
-                      <div className="rounded-full bg-slate-950 px-5 py-2 text-sm font-semibold text-white">
-                        {formattedTime}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-6 flex flex-wrap gap-3">
-                    {sections.map((section) => (
-                      <div
-                        key={section.id}
-                        className={`rounded-2xl border px-4 py-3 text-sm ${
-                          String(section.id) === String(activeSection.id)
-                            ? "border-slate-950 bg-slate-950 text-white"
-                            : section.completed
-                            ? "border-emerald-300 bg-emerald-50 text-emerald-700"
-                            : "border-slate-200 bg-slate-50 text-slate-500"
-                        }`}
-                      >
-                        <p className="font-semibold">{section.title}</p>
-                        <p className="mt-1 text-xs uppercase tracking-[0.15em]">
-                          {section.completed
-                            ? "Completed"
-                            : section.locked
-                            ? "Locked"
-                            : "In Progress"}
+                    <div className="flex flex-wrap justify-between gap-4 border-b pb-6">
+                      <div>
+                        <h1 className="text-3xl font-bold">
+                          {assessment.title}
+                        </h1>
+                        <p className="text-sm text-gray-500">
+                          {activeSection.title} section
                         </p>
                       </div>
-                    ))}
-                  </div>
 
-                  <div className="mt-8">
-                    <QuestionEngine
-                      questions={questions}
-                      currentQuestion={currentQuestion}
-                      answers={answers}
-                      onSelectAnswer={handleSelectAnswer}
-                      onQuestionChange={setCurrentQuestion}
+                      <div className="flex gap-3">
+                        <div>Q {currentQuestion + 1}/{sectionQuestions.length}</div>
+                        <div>Violations: {violations}</div>
+                        <div>{formattedTime}</div>
+                      </div>
+                    </div>
+
+                    {/* ✅ ADD THIS EXACTLY HERE */}
+                    <div style={{
+                      display: "flex",
+                      gap: "10px",
+                      marginTop: "15px",
+                      marginBottom: "10px"
+                    }}>
+
+                      {sections?.map((sec, index) => {
+                       const currentIndex = sections.findIndex(
+                         (s) => s.id === activeSection?.id
+                      );
+
+                       const isActive = activeSection?.id === sec.id;
+                       const isAllowed = index === currentIndex; // only current section
+
+                       return (
+                         <div
+                           key={sec.id}
+                           style={{
+                             padding: "8px 16px",
+                             borderRadius: "8px",
+                             cursor: isAllowed ? "pointer" : "not-allowed",
+                             background: isActive ? "#111827" : "#e5e7eb",
+                             color: isActive ? "#fff" : "#000",
+                             fontWeight: "500",
+                             opacity: isAllowed ? 1 : 0.5
+                           }}
+                           onClick={() => {
+                             if (isAllowed) {
+                               loadAssessment(sec.id);
+                             }
+                           }}
+                         >
+                           {sec.title}
+                        </div>
+                       );
+                      })}
+                     
+               </div>
+
+                    <div className="mt-6">
+
+                    {sectionQuestions.length === 0 ? (
+                      <div>No questions for this section</div>
+                    ) : (
+                      <QuestionEngine
+                        questions={sectionQuestions}
+                        currentQuestion={currentQuestion}
+                        answers={answers}
+                        onSelectAnswer={handleSelectAnswer}
+                        onQuestionChange={setCurrentQuestion}
+                      />
+                    )}
+                    </div>
+
+                    <div style={{ marginTop: "20px", display: "flex", gap: "10px" }}>
+                     <button
+                       style={{
+                         padding: "8px 16px",
+                         borderRadius: "6px",
+                         background: "#e5e7eb",
+                         border: "none",
+                         cursor: "pointer"
+                       }}
+                       disabled={currentQuestion === 0}
+                       onClick={() =>
+                         setCurrentQuestion((c) => Math.max(c - 1, 0))
+                       }
+                     >
+                       Previous
+                     </button>
+
+                     <button
+                       style={{
+                         padding: "8px 16px",
+                         borderRadius: "6px",
+                         background: "#e5e7eb",
+                         border: "none",
+                         cursor: "pointer"
+                       }}
+                       disabled={currentQuestion === sectionQuestions.length - 1}
+                       onClick={() =>
+                         setCurrentQuestion((c) =>
+                           Math.min(c + 1, sectionQuestions.length - 1)
+                         )
+                       }
+                     >
+                       Next
+                     </button>
+
+                     <button
+                       style={{
+                         padding: "8px 16px",
+                         borderRadius: "6px",
+                         background: "#10b981",
+                         color: "#fff",
+                         border: "none",
+                         cursor: "pointer"
+                       }}
+                       onClick={confirmAndSubmit}
+  
+                     >
+                       {isFinalSection
+                         ? "Submit Test"
+                         : `Submit ${activeSection?.title}`}
+                     </button>
+                   </div>
+
+                  </section>
+
+                  {/* RIGHT PANEL */}
+                  <aside className="bg-black text-white p-4 rounded-lg">
+                    <h2>Monitor Candidate</h2>
+
+                    <video
+                      ref={videoRef}
+                      autoPlay
+                      muted
+                      playsInline
+                      style={{ width: "100%", borderRadius: "10px" }}
                     />
-                  </div>
+                  </aside>
 
-                  <div className="mt-8 flex flex-wrap items-center gap-3">
-                    <button
-                      type="button"
-                      disabled={currentQuestion === 0 || isSubmitting}
-                      onClick={() =>
-                        setCurrentQuestion((c) => Math.max(c - 1, 0))
-                      }
-                      className="rounded-full border border-slate-300 px-5 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50"
-                    >
-                      Previous
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={
-                        currentQuestion === questions.length - 1 ||
-                        isSubmitting
-                      }
-                      onClick={() =>
-                        setCurrentQuestion((c) =>
-                          Math.min(c + 1, questions.length - 1)
-                        )
-                      }
-                      className="rounded-full border border-slate-300 px-5 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50"
-                    >
-                      Next
-                    </button>
-
-                    <SubmissionHandler
-                      questions={questions}
-                      answers={answers}
-                      onSubmit={confirmAndSubmit}
-                      disabled={hasSubmitted || isSubmitting}
-                      metadata={{ testName: assessment.title }}
-                      label={
-                        isFinalSection
-                          ? "Submit Test"
-                          : `Submit ${activeSection.title}`
-                      }
-                    />
-                  </div>
-                </section>
-
-                <aside className="rounded-[28px] bg-slate-950 p-6 text-white shadow-lg">
-                  <h2 className="text-xl font-bold">Monitor Candidate</h2>
-                  <p className="mt-4 text-sm text-slate-300">
-                    Active Section:{" "}
-                    <span className="font-semibold text-white">
-                      {activeSection.title}
-                    </span>
-                  </p>
-
-                  <video
-                    ref={videoRef}
-                    autoPlay
-                    muted
-                    playsInline
-                    style={{
-                      width: "100%",
-                      borderRadius: "12px",
-                      marginTop: "12px"
-                    }}
-                  />
-                </aside>
+                </div>
               </div>
-            </div>
-          );
-        }}
-      </TimerSystem>
-    )}
-  </>
+            );
+          }}
+        </TimerSystem>
+      )}
+
+      {/* MODAL */}
+      {showConfirm && (
+        <div style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          width: "100%",
+          height: "100%",
+          background: "rgba(0,0,0,0.5)",
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          zIndex: 9999
+        }}>
+          <div style={{
+            background: "#fff",
+            padding: "25px",
+            borderRadius: "12px",
+            width: "300px",
+            textAlign: "center"
+          }}>
+            <p>Are you sure you want to {confirmLabel}?</p>
+
+            <button
+              onClick={async () => {
+                setShowConfirm(false);
+                await submitCurrentSection({
+                  message: isFinalSection
+                    ? "Submitting final section..."
+                    : `Submitting ${activeSection?.title || "section"}...`
+                });
+              }}
+            >
+              Yes
+            </button>
+
+            <button onClick={() => setShowConfirm(false)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+    </div>
+  </div>
 );
 }
 

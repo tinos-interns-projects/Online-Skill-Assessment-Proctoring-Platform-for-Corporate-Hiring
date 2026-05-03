@@ -7,6 +7,9 @@ SECTION_TYPE_CHOICES = [
     ("numerical", "Numerical"),
     ("logical", "Logical"),
     ("coding", "Coding"),
+    ("frontend", "Frontend"),
+    ("backend", "Backend"),
+    ("aptitude", "Aptitude"),
 ]
 
 
@@ -280,7 +283,7 @@ class Test(models.Model):
     duration_minutes = models.IntegerField(default=60)
 
     def __str__(self):
-        return f"{self.user.username} - {self.blueprint.name}"
+        return f"{self.blueprint}"
     
 
 class TestInvitation(models.Model):
@@ -320,11 +323,12 @@ class TestAssignment(models.Model):
         blank=True,
         related_name="test_assignments"
     )
-    test = models.OneToOneField(
+    test = models.ForeignKey(
         Test,
         on_delete=models.CASCADE,
-        related_name="assignment"
+        related_name="assignments"
     )
+
     assigned_at = models.DateTimeField(auto_now_add=True)
     scheduled_start = models.DateTimeField()
     duration_minutes = models.PositiveIntegerField(default=45)

@@ -41,4 +41,5 @@ urlpatterns = [
     path("employer/candidate-report/<int:test_id>/", views.candidate_report, name="candidate_report"),
     path("save-webcam-frame/", views.save_webcam_frame, name="save_webcam_frame"),
     path("run-code/", views.run_code, name="run_code"),
+    path('api/invite/<str:token>/', views.invite_api),
 ]

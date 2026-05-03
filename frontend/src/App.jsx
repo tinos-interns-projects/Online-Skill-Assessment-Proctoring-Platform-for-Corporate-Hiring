@@ -31,6 +31,7 @@ function App() {
   return (
     <BrowserRouter>
       <ScrollToHash />
+
       <Routes>
 
         <Route path="/" element={<LandingPage />} />
@@ -48,6 +49,7 @@ function App() {
         <Route path="/resources/blog" element={<Blog />} />
         <Route path="/resources/docs" element={<Documentation />} />
 
+        {/* ADMIN */}
         <Route
           path="/admin"
           element={
@@ -64,6 +66,7 @@ function App() {
           <Route path="settings" element={<AdminSettings />} />
         </Route>
 
+        {/* EMPLOYER */}
         <Route
           path="/employer"
           element={
@@ -73,6 +76,7 @@ function App() {
           }
         />
 
+        {/* CANDIDATE DASHBOARD */}
         <Route
           path="/candidate"
           element={
@@ -82,9 +86,10 @@ function App() {
           }
         />
 
-        {/* ⭐ Invitation link route */}
+        {/* INVITE LINK (NO PROTECTION) */}
         <Route path="/invite/:token" element={<TestInterface />} />
 
+        {/* TEST (PROTECTED) */}
         <Route
           path="/test"
           element={
@@ -94,16 +99,11 @@ function App() {
           }
         />
 
-        <Route
-          path="/result"
-          element={
-            <ProtectedRoute allowedRole="candidate">
-              <ResultPage />
-            </ProtectedRoute>
-          }
-        />
+        {/* RESULT (IMPORTANT: NO PROTECTED ROUTE) */}
+        <Route path="/result" element={<ResultPage />} />
 
       </Routes>
+
     </BrowserRouter>
   );
 }

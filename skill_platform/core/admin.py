@@ -40,8 +40,8 @@ class TopicAdmin(admin.ModelAdmin):
 
 @admin.register(Question)
 class QuestionAdmin(admin.ModelAdmin):
-    list_display = ('question_text', 'question_type' , 'skill', 'topic', 'difficulty')
-    list_filter = ('question_type' , 'skill', 'difficulty')
+    list_display = ('question_text', 'question_type', 'section_type', 'skill', 'topic', 'difficulty')
+    list_filter = ('question_type', 'section_type', 'skill', 'difficulty')
     search_fields = ('question_text',)
 
 @admin.register(TestCase)
@@ -157,7 +157,9 @@ class TestAdmin(admin.ModelAdmin):
         'id',
         'user',
         'blueprint',
-        'is_generated',      # show generation status
+        'scheduled_start',   
+        'scheduled_end',     
+        'is_generated',
         'is_completed',
         'completed_at'
     )
@@ -173,6 +175,19 @@ class TestAdmin(admin.ModelAdmin):
         'user__email',
     )
 
+    # 🔥 IMPORTANT: SHOW THESE FIELDS IN FORM
+    fields = (
+        'blueprint',
+        'user',
+        'scheduled_start',   
+        'scheduled_end',     
+        'duration_minutes',  
+        'is_generated',
+        'is_completed',
+        'completed_at',
+        'started_at'
+    )
+
     # 🔒 System-controlled fields
     readonly_fields = (
         'is_generated',
@@ -184,8 +199,8 @@ class TestAdmin(admin.ModelAdmin):
     def save_model(self, request, obj, form, change):
         super().save_model(request, obj, form, change)
 
-        # Auto-generate questions only when creating new Test
-        if not change:
+        # ONLY generate for candidate tests
+        if not change and obj.is_generated:
             try:
                 generate_test_questions(obj)
             except TestEngineError as e:
@@ -196,6 +211,12 @@ class TestAdmin(admin.ModelAdmin):
 class TestQuestionAdmin(admin.ModelAdmin):
     list_display = ('test', 'section', 'question')
     list_filter = ('test',)
+
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        if db_field.name == "test":
+            # ✅ Show ONLY predefined tests (not candidate tests)
+            kwargs["queryset"] = Test.objects.filter(is_generated=False)
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
 
 @admin.register(Section)

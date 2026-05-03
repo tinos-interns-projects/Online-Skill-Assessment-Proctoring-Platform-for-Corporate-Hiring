@@ -543,6 +543,56 @@ def candidate_dashboard_api(request):
     })
 
 
+from core.models import TestAssignment
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def invite_api(request, token):
+    try:
+        invitation = TestInvitation.objects.get(token=token)
+        test = invitation.test
+        user = invitation.candidate
+
+        # ADD THIS BLOCK (VERY IMPORTANT)
+        from django.utils import timezone
+        now = timezone.now()
+
+        if test.scheduled_start and now < test.scheduled_start:
+            return Response({
+                "detail": "Test has not started yet",
+                "scheduledStart": test.scheduled_start
+            }, status=403)
+
+        if test.scheduled_end and now >= test.scheduled_end:
+            return Response({
+                "detail": "Test has expired"
+            }, status=403)
+
+        # -----------------------------
+        assignment = TestAssignment.objects.filter(
+            test=test,
+            candidate=user
+        ).first()
+
+        attempt = Attempt.objects.filter(
+            test=test,
+            user=user
+        ).first()
+
+        return Response({
+            "testId": test.id,
+            "title": test.blueprint.name if test.blueprint else "Test",
+            "scheduledStart": test.scheduled_start,
+            "scheduledEnd": test.scheduled_end,
+            "attemptId": attempt.id if attempt else None
+        })
+
+    except TestInvitation.DoesNotExist:
+        return Response({"error": "Invalid token"}, status=404)
+
+
+
+
 @api_view(["GET", "POST"])
 @permission_classes([AllowAny])
 def assessments_api(request):
@@ -1119,6 +1169,7 @@ def candidate_dashboard(request):
 })
 
 
+
 from django.contrib.auth.models import User
 
 from core.services.test_engine import generate_test_questions
@@ -1235,15 +1286,21 @@ def employer_dashboard(request):
         # ------------------------------
         # CREATE TEST
         # ------------------------------
-        test = Test.objects.create(
-            blueprint=blueprint,
-            user=candidate,
-            scheduled_start=scheduled_start,
-            scheduled_end=scheduled_end,
-            duration_minutes=duration
-        )
+        from core.services.employer_dashboard import create_test_assignment
+        
 
-        generate_test_questions(test)
+        # ------------------------------
+        # CREATE ASSIGNMENT (FIXED)
+        # ------------------------------
+        assignment = create_test_assignment(
+            employer=request.user,
+            candidate=candidate,
+            blueprint=blueprint,
+            template=None,
+            scheduled_start=scheduled_start,
+            duration_minutes=duration,
+            request=request
+        )
 
         # ------------------------------
         # CREATE INVITATION LINK
@@ -1251,7 +1308,7 @@ def employer_dashboard(request):
         token = uuid.uuid4().hex
 
         TestInvitation.objects.create(
-            test=test,
+            test=assignment.test,
             candidate=candidate,
             token=token
         )
