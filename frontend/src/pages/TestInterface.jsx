@@ -3,7 +3,13 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import QuestionEngine from "../components/QuestionEngine.jsx";
 import SubmissionHandler from "../components/SubmissionHandler.jsx";
 import TimerSystem from "../components/TimerSystem.jsx";
-import { detectFace, getQuestions, logViolation, submitTest, uploadScreenshot } from "../services/api.js";
+import {
+  detectFace,
+  getQuestions,
+  logViolation,
+  submitTest,
+  uploadScreenshot,
+} from "../services/api.js";
 
 const ACTIVE_TAB_KEY = "skillassess-active-exam-tab";
 
@@ -17,11 +23,11 @@ function normalizeQuestion(question, index) {
 
     // 🔥 IMPORTANT FIX
     sectionId: question.sectionId,
-    sectionType: question.sectionType
+    sectionType: question.sectionType,
   };
 }
 
-function TestInterface() { 
+function TestInterface() {
   const navigate = useNavigate();
   const { token } = useParams();
 
@@ -30,8 +36,8 @@ function TestInterface() {
       console.log("Calling invite API with token:", token);
 
       fetch(`http://127.0.0.1:8000/api/invite/${token}/`)
-        .then(res => res.json())
-        .then(data => {
+        .then((res) => res.json())
+        .then((data) => {
           console.log("Invite API response:", data);
 
           if (data.error) {
@@ -43,20 +49,17 @@ function TestInterface() {
             title: data.title,
             scheduledStart: data.scheduledStart,
             scheduledEnd: data.scheduledEnd,
-            attemptId: data.attemptId
+            attemptId: data.attemptId,
           });
 
           loadAssessment(undefined, data.attemptId);
-
-
         })
-        .catch(err => {
+        .catch((err) => {
           console.error(err);
           setError("Failed to load invitation");
         });
     }
   }, [token]);
-
 
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -65,7 +68,9 @@ function TestInterface() {
   const sectionSubmittingRef = useRef(false);
   const violationTimestampsRef = useRef({});
   const timeLeftRef = useRef(0);
-  const tabIdRef = useRef(`exam-tab-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const tabIdRef = useRef(
+    `exam-tab-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
   const startTimeRef = useRef(Date.now());
   const [assessment, setAssessment] = useState(null);
   const [sections, setSections] = useState([]);
@@ -88,12 +93,6 @@ function TestInterface() {
   const [confirmLabel, setConfirmLabel] = useState("");
   const [timeLeft, setTimeLeft] = useState(0);
 
-
-
-
-
-
-  
   useEffect(() => {
     if (!examNotStarted) return;
     if (!scheduledStart) return;
@@ -115,9 +114,7 @@ function TestInterface() {
     }, 1000);
 
     return () => clearInterval(interval);
-
   }, [scheduledStart, examNotStarted]);
-
 
   const activeSectionDurationSeconds = useMemo(() => {
     if (!activeSection) return 0;
@@ -125,14 +122,15 @@ function TestInterface() {
     // ✅ ONLY section time
     return (activeSection.timeLimitMinutes || 20) * 60;
   }, [activeSection]);
-  
 
   const isFinalSection = useMemo(() => {
     if (!activeSection || !sections.length) {
       return true;
     }
 
-    const activeIndex = sections.findIndex((section) => String(section.id) === String(activeSection.id));
+    const activeIndex = sections.findIndex(
+      (section) => String(section.id) === String(activeSection.id),
+    );
     return activeIndex === sections.length - 1;
   }, [activeSection, sections]);
 
@@ -141,7 +139,9 @@ function TestInterface() {
   };
 
   const moveToNextQuestion = () => {
-    setCurrentQuestion((current) => Math.min(current + 1, Math.max(questions.length - 1, 0)));
+    setCurrentQuestion((current) =>
+      Math.min(current + 1, Math.max(questions.length - 1, 0)),
+    );
   };
 
   const buildSectionAnswerPayload = () =>
@@ -157,15 +157,13 @@ function TestInterface() {
 
     const response = await getQuestions({
       token,
-      ...(sectionId ? { section_id: sectionId } : {})
+      ...(sectionId ? { section_id: sectionId } : {}),
     });
-
 
     console.log("API RESPONSE:", response);
 
     // HANDLE EXAM NOT STARTED
     if (response?.status === "not_started") {
-
       setExamNotStarted(true);
       setScheduledStart(response.scheduledStart);
 
@@ -181,31 +179,37 @@ function TestInterface() {
     if (sectionId) {
       // ✅ ONLY use sectionId (IGNORE backend activeSection)
       nextActiveSection = nextSections.find(
-        (section) => String(section.id) === String(sectionId)
-     );
+        (section) => String(section.id) === String(sectionId),
+      );
     } else {
       // ✅ Always start from first section
       nextActiveSection = nextSections[0] || null;
-   }
+    }
 
     setAssessment({
       id: response?.assessmentId ?? null,
       title: response?.title || "Assessment",
       durationMinutes: response?.durationMinutes || 20,
-      remainingSeconds: response?.remainingSeconds || (response?.durationMinutes || 20) * 60,
-      overallRemainingSeconds: response?.overallRemainingSeconds || response?.remainingSeconds || 0,
+      remainingSeconds:
+        response?.remainingSeconds || (response?.durationMinutes || 20) * 60,
+      overallRemainingSeconds:
+        response?.overallRemainingSeconds || response?.remainingSeconds || 0,
       scheduledStart: response?.scheduledStart || null,
       scheduledEnd: response?.scheduledEnd || null,
       attemptId: response?.attemptId || null,
       testId: response?.testId || null,
-      observationMessage: response?.observationMessage || "You are under camera observation"
+      observationMessage:
+        response?.observationMessage || "You are under camera observation",
     });
     setSections(nextSections);
     setActiveSection(nextActiveSection);
     setQuestions(nextQuestions);
     setCurrentQuestion(0);
-    timeLeftRef.current = nextActiveSection?.remainingSeconds || response?.remainingSeconds || 0;
-    setStatusMessage(response?.observationMessage || "You are under camera observation");
+    timeLeftRef.current =
+      nextActiveSection?.remainingSeconds || response?.remainingSeconds || 0;
+    setStatusMessage(
+      response?.observationMessage || "You are under camera observation",
+    );
   };
 
   const sendViolationToBackend = async (activityType) => {
@@ -220,7 +224,11 @@ function TestInterface() {
     }
   };
 
-  const registerViolation = (message, key = message, activityType = "GENERAL_VIOLATION") => {
+  const registerViolation = (
+    message,
+    key = message,
+    activityType = "GENERAL_VIOLATION",
+  ) => {
     if (submittedRef.current) {
       return;
     }
@@ -248,15 +256,20 @@ function TestInterface() {
       }
 
       return newCount;
-     });
+    });
     setStatusMessage(message);
-    
+
     void sendViolationToBackend(activityType);
   };
 
   const captureFrameData = () => {
     const video = videoRef.current;
-    if (!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
+    if (
+      !video ||
+      video.readyState < 2 ||
+      !video.videoWidth ||
+      !video.videoHeight
+    ) {
       return null;
     }
 
@@ -273,48 +286,48 @@ function TestInterface() {
     return canvas.toDataURL("image/jpeg", 0.8);
   };
 
-
   const finalizeWholeAssessment = async (options = {}) => {
+    // 🚫 Block duplicate submit
+    if (submittedRef.current || submittingRef.current) {
+      console.log("🚫 BLOCKED duplicate submit");
+      return;
+    }
 
-  // 🚫 Block duplicate submit
-  if (submittedRef.current || submittingRef.current) {
-    console.log("🚫 BLOCKED duplicate submit");
-    return;
-  }
+    // 🚫 Block invalid state
+    if (!assessment?.attemptId) {
+      console.log("🚫 No attemptId — blocking submit");
+      return;
+    }
 
-  // 🚫 Block invalid state
-  if (!assessment?.attemptId) {
-    console.log("🚫 No attemptId — blocking submit");
-    return;
-  }
+    // 🚫 Block if no active section
+    if (!activeSection?.id) {
+      console.log("🚫 No active section — blocking submit");
+      return;
+    }
 
-  // 🚫 Block if no active section
-  if (!activeSection?.id) {
-    console.log("🚫 No active section — blocking submit");
-    return;
-  }
-
-  submittingRef.current = true;
-  setIsSubmitting(true);
+    submittingRef.current = true;
+    setIsSubmitting(true);
 
     try {
       const response = await submitTest({
         assessmentId: assessment.id,
         testId: assessment.testId,
         attemptId: assessment.attemptId,
-        sectionId: activeSection.id, 
+        sectionId: activeSection.id,
         answers,
-        timeTaken: Math.max(assessment.durationSeconds - timeLeftRef.current, 0),
+        timeTaken: Math.max(
+          assessment.durationSeconds - timeLeftRef.current,
+          0,
+        ),
         violationsCount: violations,
         autoSubmitted: options.autoSubmitted || false,
-        autoSubmitReason: options.autoSubmitReason || ""
+        autoSubmitReason: options.autoSubmitReason || "",
       });
 
       submittedRef.current = true;
       setHasSubmitted(true);
 
       navigate("/result", { state: response });
-
     } catch (error) {
       console.error("Submit failed", error);
       setStatusMessage("Submission failed. Try again.");
@@ -328,11 +341,9 @@ function TestInterface() {
     console.log("🚨 SUBMIT CALLED", {
       activeSection,
       attemptId: assessment?.attemptId,
-      timeLeft: timeLeftRef.current
+      timeLeft: timeLeftRef.current,
     });
-    
 
-    
     if (
       submittedRef.current ||
       sectionSubmittingRef.current ||
@@ -344,7 +355,9 @@ function TestInterface() {
 
     sectionSubmittingRef.current = true;
     setIsSubmitting(true);
-    setStatusMessage(options.message || `Submitting ${activeSection.title || "section"}...`);
+    setStatusMessage(
+      options.message || `Submitting ${activeSection.title || "section"}...`,
+    );
 
     try {
       const response = await submitTest({
@@ -353,16 +366,19 @@ function TestInterface() {
         attemptId: assessment.attemptId,
         sectionId: activeSection.id,
         answers: buildSectionAnswerPayload(),
-        timeTaken: Math.max(((activeSection.timeLimitMinutes || assessment.durationMinutes || 20) * 60) - timeLeftRef.current, 0),
+        timeTaken: Math.max(
+          (activeSection.timeLimitMinutes || assessment.durationMinutes || 20) *
+            60 -
+            timeLeftRef.current,
+          0,
+        ),
         violationsCount: violations,
-        autoSubmitted: options.autoSubmitted
+        autoSubmitted: options.autoSubmitted,
       });
 
       if (response?.status === "section_saved") {
         console.log("SUBMIT RESPONSE:", response);
       }
-        
-
     } catch (submitError) {
       setStatusMessage(submitError.message || "Unable to submit section.");
       setError(submitError.message || "Unable to submit section.");
@@ -383,20 +399,14 @@ function TestInterface() {
     setShowConfirm(true);
   };
 
-
   useEffect(() => {
-  const loadQuestions = async () => {
-    setLoading(true);
-    setError("");
-    setStatusMessage("");
+    const loadQuestions = async () => {
+      setLoading(true);
+      setError("");
+      setStatusMessage("");
 
-    try {
-      
-      
-
-      await loadAssessment();
-
-
+      try {
+        await loadAssessment();
       } catch (loadError) {
         setError(loadError.message || "Unable to load questions.");
       } finally {
@@ -411,14 +421,17 @@ function TestInterface() {
     let isMounted = true;
 
     const startCamera = async () => {
-      console.log("🎥 Starting camera..."); 
+      console.log("🎥 Starting camera...");
       if (!navigator.mediaDevices?.getUserMedia) {
         console.log("Camera not supported");
         return;
       }
 
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false,
+        });
         if (!isMounted) {
           stream.getTracks().forEach((track) => track.stop());
           return;
@@ -431,10 +444,15 @@ function TestInterface() {
         setCameraReady(true);
 
         stream.getVideoTracks().forEach((track) => {
-          track.onended = () => registerViolation("Warning: camera was turned off.", "camera-ended", "CAMERA_OFF");
+          track.onended = () =>
+            registerViolation(
+              "Warning: camera was turned off.",
+              "camera-ended",
+              "CAMERA_OFF",
+            );
         });
       } catch (cameraError) {
-          console.log("Camera error:", cameraError);
+        console.log("Camera error:", cameraError);
       }
     };
 
@@ -452,26 +470,44 @@ function TestInterface() {
     const handleVisibilityChange = () => {
       if (document.hidden) {
         if (!assessment?.attemptId || hasSubmitted) return;
-        registerViolation("Warning: tab switching detected.", "tab-switch", "TAB_SWITCH");
+        registerViolation(
+          "Warning: tab switching detected.",
+          "tab-switch",
+          "TAB_SWITCH",
+        );
       }
     };
 
     const handleWindowBlur = () => {
       if (!document.hidden) {
         if (!assessment?.attemptId || hasSubmitted) return;
-        registerViolation("Warning: window focus lost.", "window-blur", "WINDOW_BLUR");
+        registerViolation(
+          "Warning: window focus lost.",
+          "window-blur",
+          "WINDOW_BLUR",
+        );
       }
     };
 
     const handleBlockedClipboardAction = (event) => {
       event.preventDefault();
-      registerViolation(`Warning: ${event.type} is not allowed during the test.`, `clipboard-${event.type}`, event.type.toUpperCase());
-      window.alert(`${event.type.charAt(0).toUpperCase()}${event.type.slice(1)} is disabled during the test.`);
+      registerViolation(
+        `Warning: ${event.type} is not allowed during the test.`,
+        `clipboard-${event.type}`,
+        event.type.toUpperCase(),
+      );
+      window.alert(
+        `${event.type.charAt(0).toUpperCase()}${event.type.slice(1)} is disabled during the test.`,
+      );
     };
 
     const handleContextMenu = (event) => {
       event.preventDefault();
-      registerViolation("Warning: right click is disabled during the test.", "context-menu", "RIGHT_CLICK");
+      registerViolation(
+        "Warning: right click is disabled during the test.",
+        "context-menu",
+        "RIGHT_CLICK",
+      );
     };
 
     const heartbeat = () => {
@@ -482,14 +518,21 @@ function TestInterface() {
         if (current) {
           const parsed = JSON.parse(current);
           if (parsed.id !== tabIdRef.current && now - parsed.timestamp < 4000) {
-            registerViolation("Warning: multiple tabs detected.", "multi-tab", "MULTIPLE_TABS");
+            registerViolation(
+              "Warning: multiple tabs detected.",
+              "multi-tab",
+              "MULTIPLE_TABS",
+            );
           }
         }
       } catch (storageError) {
         // Ignore malformed local storage and overwrite it below.
       }
 
-      localStorage.setItem(ACTIVE_TAB_KEY, JSON.stringify({ id: tabIdRef.current, timestamp: now }));
+      localStorage.setItem(
+        ACTIVE_TAB_KEY,
+        JSON.stringify({ id: tabIdRef.current, timestamp: now }),
+      );
     };
 
     const handleStorage = (event) => {
@@ -499,8 +542,15 @@ function TestInterface() {
 
       try {
         const parsed = JSON.parse(event.newValue);
-        if (parsed.id !== tabIdRef.current && Date.now() - parsed.timestamp < 4000) {
-          registerViolation("Warning: multiple tabs detected.", "multi-tab", "MULTIPLE_TABS");
+        if (
+          parsed.id !== tabIdRef.current &&
+          Date.now() - parsed.timestamp < 4000
+        ) {
+          registerViolation(
+            "Warning: multiple tabs detected.",
+            "multi-tab",
+            "MULTIPLE_TABS",
+          );
         }
       } catch (storageError) {
         // Ignore malformed storage values.
@@ -526,7 +576,6 @@ function TestInterface() {
       document.removeEventListener("cut", handleBlockedClipboardAction);
       document.removeEventListener("contextmenu", handleContextMenu);
       window.removeEventListener("storage", handleStorage);
-      
 
       const current = localStorage.getItem(ACTIVE_TAB_KEY);
       if (!current) {
@@ -550,16 +599,16 @@ function TestInterface() {
     }
 
     //const screenshotInterval = window.setInterval(async () => {
-      //const imageData = captureFrameData();
-      //if (!imageData) {
-       // return;
-      //}
+    //const imageData = captureFrameData();
+    //if (!imageData) {
+    // return;
+    //}
 
-      //try {
-        //await uploadScreenshot({ attemptId: assessment.attemptId, imageData });
-      //} catch (uploadError) {
-        //setStatusMessage((current) => current || "Unable to upload webcam screenshot right now.");
-      //}
+    //try {
+    //await uploadScreenshot({ attemptId: assessment.attemptId, imageData });
+    //} catch (uploadError) {
+    //setStatusMessage((current) => current || "Unable to upload webcam screenshot right now.");
+    //}
     //}, 10000);
 
     //return () => window.clearInterval(screenshotInterval);
@@ -571,21 +620,21 @@ function TestInterface() {
     }
 
     //const faceInterval = window.setInterval(async () => {
-      //const imageData = captureFrameData();
-      //if (!imageData) {
-        //return;
-      //}
+    //const imageData = captureFrameData();
+    //if (!imageData) {
+    //return;
+    //}
 
-      //try {
-        //const response = await detectFace({ attemptId: assessment.attemptId, imageData });
-        //if (response?.violation) {
-          //const key = response.reason === "multiple_faces" ? "multiple-faces" : "no-face";
-          //const type = response.reason === "multiple_faces" ? "MULTIPLE_FACES" : "NO_FACE";
-          //registerViolation(response.message || "Warning: face violation detected.", key, type);
-        //}
-      //} catch (faceError) {
-        //setStatusMessage((current) => current || "Unable to run face monitoring right now.");
-      //}
+    //try {
+    //const response = await detectFace({ attemptId: assessment.attemptId, imageData });
+    //if (response?.violation) {
+    //const key = response.reason === "multiple_faces" ? "multiple-faces" : "no-face";
+    //const type = response.reason === "multiple_faces" ? "MULTIPLE_FACES" : "NO_FACE";
+    //registerViolation(response.message || "Warning: face violation detected.", key, type);
+    //}
+    //} catch (faceError) {
+    //setStatusMessage((current) => current || "Unable to run face monitoring right now.");
+    //}
     //}, 5000);
 
     //return () => window.clearInterval(faceInterval);
@@ -602,7 +651,7 @@ function TestInterface() {
           finalizeWholeAssessment({
             autoSubmitted: true,
             message: "Assessment time ended",
-            autoSubmitReason: "timeout"
+            autoSubmitReason: "timeout",
           });
         }
       }
@@ -617,23 +666,21 @@ function TestInterface() {
       !submittedRef.current &&
       !submittingRef.current &&
       assessment?.attemptId
-
     ) {
       finalizeWholeAssessment({
         autoSubmitted: true,
         message: "Test auto-submitted due to violations",
-        autoSubmitReason: "violations"
+        autoSubmitReason: "violations",
       });
     }
   }, [violations, assessment?.attemptId]);
-
 
   // Loading
   if (loading) {
     return <p className="p-6 text-sm text-slate-600">Loading assessment...</p>;
   }
 
-  // Error 
+  // Error
   if (error) {
     return <p className="p-6 text-sm text-rose-600">{error}</p>;
   }
@@ -641,156 +688,146 @@ function TestInterface() {
   if (!assessment) {
     return <p className="p-6 text-sm">Loading assessment...</p>;
   }
-
-  // ✅ HANDLE EXAM NOT STARTED 
+// ✅ HANDLE EXAM NOT STARTED
 if (examNotStarted) {
   return (
-    <div style={{
-      width: "100%",
-      height: "100vh",
-      display: "flex",
-      justifyContent: "center",
-      alignItems: "center"
-    }}>
-      <div style={{ textAlign: "center" }}>
-        <h2>Exam not started yet</h2>
-        <h3>Starting in {countdown}</h3>
+    <div className="fixed inset-0 flex flex-col items-center justify-center bg-slate-100 z-50">
+
+      <div className="text-center">
+        <h2 className="text-3xl font-bold mb-3">
+          Exam not started yet
+        </h2>
+
+        <h3 className="text-lg text-gray-600">
+          Starting in {countdown}
+        </h3>
       </div>
+
     </div>
   );
 }
 
-      return (
-  <div style={{
-    width: "100%",
-    minHeight: "100vh",
-    display: "flex",
-    justifyContent: "flex-start",
-    alignItems: "flex-start",
-    padding: "0"
-  }}>
-    <div style={{ width: "100%" }}>
+  return (
+    <div
+      style={{
+        width: "100%",
+        minHeight: "100vh",
+        display: "flex",
+        justifyContent: "flex-start",
+        alignItems: "flex-start",
+        padding: "0",
+      }}
+    >
+      <div style={{ width: "100%" }}>
+        {/* Show loading if section not ready */}
+        {!activeSection ? (
+          <p>Loading test...</p>
+        ) : examNotStarted ? (
+          <div
+            style={{
+              width: "100%",
+              height: "100vh",
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: "center",
+              alignItems: "center",
+            }}
+          >
+            <h2 style={{ fontSize: "28px", marginBottom: "10px" }}>
+              Exam not started yet
+            </h2>
 
-      {/* Show loading if section not ready */}
-      {!activeSection ? (
-        <p>Loading test...</p>
+            <h3 style={{ fontSize: "20px", color: "#555" }}>
+              Starting in {countdown}
+            </h3>
+          </div>
+        ) : (
+          <TimerSystem
+            key={activeSection.id}
+            durationSeconds={activeSectionDurationSeconds}
+            isRunning={
+              !hasSubmitted &&
+              !isSubmitting &&
+              !examNotStarted &&
+              activeSection?.id &&
+              assessment?.attemptId &&
+              activeSectionDurationSeconds > 0
+            }
+            onExpire={async () => {
+              console.log("⏱ Section time over");
 
-      ) : examNotStarted ? (
+              if (!activeSection?.id) return;
+              if (!assessment?.attemptId) return;
+              if (examNotStarted) return;
+              if (hasSubmitted || isSubmitting) return;
+              if (sectionSubmittingRef.current) return;
 
-        <div style={{
-          width: "100%",
-          height: "100vh",
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "center",
-          alignItems: "center"
-        }}>
-          <h2 style={{ fontSize: "28px", marginBottom: "10px" }}>
-            Exam not started yet
-          </h2>
+              // ✅ Submit section
+              await submitCurrentSection({
+                autoSubmitted: true,
+                message: `${activeSection.title} time ended. Moving ahead automatically.`,
+              });
 
-          <h3 style={{ fontSize: "20px", color: "#555" }}>
-            Starting in {countdown}
-          </h3>
-        </div>
-    
+              // ✅ Find next section manually
+              const currentIndex = sections.findIndex(
+                (s) => String(s.id) === String(activeSection.id),
+              );
 
-      ) : (
+              const nextSection = sections[currentIndex + 1];
 
-        <TimerSystem
-          key={activeSection.id}
-          durationSeconds={activeSectionDurationSeconds}
-          isRunning={
-            !hasSubmitted &&
-            !isSubmitting &&
-            !examNotStarted &&
-            activeSection?.id &&
-            assessment?.attemptId &&
-            activeSectionDurationSeconds > 0
-          }
-          onExpire={async () => {
-  console.log("⏱ Section time over");
+              if (nextSection) {
+                console.log("➡ Moving to next section:", nextSection.title);
 
-  if (!activeSection?.id) return;
-  if (!assessment?.attemptId) return;
-  if (examNotStarted) return;
-  if (hasSubmitted || isSubmitting) return;
-  if (sectionSubmittingRef.current) return;
+                setActiveSection(nextSection);
+                setCurrentQuestion(0);
 
-  // ✅ Submit section
-  await submitCurrentSection({
-    autoSubmitted: true,
-    message: `${activeSection.title} time ended. Moving ahead automatically.`,
-  });
+                // 🔥 IMPORTANT: load new questions
+                await loadAssessment(nextSection.id);
+              } else {
+                console.log("🚀 Last section → submitting full test");
 
-  // ✅ Find next section manually
-  const currentIndex = sections.findIndex(
-    (s) => String(s.id) === String(activeSection.id)
-  );
+                await finalizeWholeAssessment({
+                  autoSubmitted: true,
+                  autoSubmitReason: "section_timeout",
+                });
+              }
+            }}
+          >
+            {({ formattedTime, timeLeft }) => {
+              timeLeftRef.current = timeLeft;
 
-  const nextSection = sections[currentIndex + 1];
+              console.log("QUESTIONS:", questions);
 
-  if (nextSection) {
-    console.log("➡ Moving to next section:", nextSection.title);
+              const sectionQuestions = questions.filter((q) => {
+                const qType = (q.sectionType || "").toLowerCase().trim();
+                const activeType = (activeSection.sectionType || "")
+                  .toLowerCase()
+                  .trim();
 
-    setActiveSection(nextSection);
-    setCurrentQuestion(0);
+                return qType === activeType;
+              });
 
-    // 🔥 IMPORTANT: load new questions
-    await loadAssessment(nextSection.id);
+              console.log("FIRST QUESTION:", sectionQuestions[0]);
 
-  } else {
-    console.log("🚀 Last section → submitting full test");
+              console.log("ACTIVE SECTION:", activeSection);
+              console.log("ALL QUESTIONS:", questions);
+              console.log("FILTERED QUESTIONS:", sectionQuestions);
 
-    await finalizeWholeAssessment({
-      autoSubmitted: true,
-      autoSubmitReason: "section_timeout"
-    });
-  }
-}}
-        >
-          {({ formattedTime, timeLeft }) => {
-            timeLeftRef.current = timeLeft;
+              console.log(
+                "Q sectionType:",
+                questions.map((q) => q.sectionType),
+              );
+              console.log("Active section title:", activeSection?.title);
+              console.log("Filtered:", sectionQuestions);
 
-            console.log("QUESTIONS:", questions);
-
-            const sectionQuestions = questions.filter((q) => {
-              const qType = (q.sectionType || "").toLowerCase().trim();
-              const activeType = (activeSection.sectionType || "").toLowerCase().trim();
-
-              return qType === activeType;
-            });
-
-            console.log("FIRST QUESTION:", sectionQuestions[0]);
-            
-
-            console.log("ACTIVE SECTION:", activeSection);
-            console.log("ALL QUESTIONS:", questions);
-            console.log("FILTERED QUESTIONS:", sectionQuestions);
-            
-            console.log("Q sectionType:", questions.map(q => q.sectionType));
-            console.log("Active section title:", activeSection?.title);
-            console.log("Filtered:", sectionQuestions);
-
-            return (
-              <div className="min-h-screen w-full bg-slate-50 p-6">
-                {/* 🔥 FIXED WIDTH ISSUE HERE */}
-                <div 
-                  className="grid w-full gap-6 lg:grid-cols-[1fr_320px]" 
-                  style={{ width: "100%" }}
-                >
-
+              return (
+                <div className="h-screen w-screen flex bg-slate-100 overflow-hidden">
                   {/* LEFT PANEL */}
-                  <section className="rounded-[28px] bg-white p-6 shadow-lg">
-                    {statusMessage && (
-                      <p className="mb-6 text-sm font-semibold text-rose-600">
-                        {statusMessage}
-                      </p>
-                    )}
-
-                    <div className="flex flex-wrap justify-between gap-4 border-b pb-6">
+                  <div className="flex-1 flex flex-col bg-white p-6">
+                    {/* HEADER */}
+                    <div className="flex justify-between items-center border-b pb-4">
                       <div>
-                        <h1 className="text-3xl font-bold">
+                        <h1 className="text-2xl font-bold">
                           {assessment.title}
                         </h1>
                         <p className="text-sm text-gray-500">
@@ -798,190 +835,187 @@ if (examNotStarted) {
                         </p>
                       </div>
 
-                      <div className="flex gap-3">
-                        <div>Q {currentQuestion + 1}/{sectionQuestions.length}</div>
-                        <div>Violations: {violations}</div>
-                        <div>{formattedTime}</div>
+                      <div className="flex gap-4 text-sm font-semibold">
+                        <div>
+                          Q {currentQuestion + 1}/{sectionQuestions.length}
+                        </div>
+                        <div className="text-red-500">
+                          Violations: {violations}
+                        </div>
+                        <div className="text-blue-600">{formattedTime}</div>
                       </div>
                     </div>
 
-                    {/* ✅ ADD THIS EXACTLY HERE */}
-                    <div style={{
-                      display: "flex",
-                      gap: "10px",
-                      marginTop: "15px",
-                      marginBottom: "10px"
-                    }}>
-
-                      {sections?.map((sec, index) => {
-                       const currentIndex = sections.findIndex(
-                         (s) => s.id === activeSection?.id
-                      );
-
-                       const isActive = activeSection?.id === sec.id;
-                       const isAllowed = index === currentIndex; // only current section
-
-                       return (
-                         <div
-                           key={sec.id}
-                           style={{
-                             padding: "8px 16px",
-                             borderRadius: "8px",
-                             cursor: isAllowed ? "pointer" : "not-allowed",
-                             background: isActive ? "#111827" : "#e5e7eb",
-                             color: isActive ? "#fff" : "#000",
-                             fontWeight: "500",
-                             opacity: isAllowed ? 1 : 0.5
-                           }}
-                           onClick={() => {
-                             if (isAllowed) {
-                               loadAssessment(sec.id);
-                             }
-                           }}
-                         >
-                           {sec.title}
-                        </div>
-                       );
-                      })}
-                     
-               </div>
-
-                    <div className="mt-6">
-
-                    {sectionQuestions.length === 0 ? (
-                      <div>No questions for this section</div>
-                    ) : (
-                      <QuestionEngine
-                        questions={sectionQuestions}
-                        currentQuestion={currentQuestion}
-                        answers={answers}
-                        onSelectAnswer={handleSelectAnswer}
-                        onQuestionChange={setCurrentQuestion}
-                      />
+                    {/* WARNING */}
+                    {statusMessage && (
+                      <div className="bg-red-100 text-red-600 p-2 rounded mt-4">
+                        {statusMessage}
+                      </div>
                     )}
+
+                    {/* SECTIONS */}
+                    <div className="flex gap-2 mt-4 flex-wrap">
+                      {sections?.map((sec, index) => {
+                        const currentIndex = sections.findIndex(
+                          (s) => s.id === activeSection?.id,
+                        );
+
+                        const isActive = activeSection?.id === sec.id;
+                        const isAllowed = index === currentIndex;
+
+                        return (
+                          <div
+                            key={sec.id}
+                            className={`px-3 py-1 rounded cursor-pointer ${
+                              isActive ? "bg-black text-white" : "bg-gray-200"
+                            } ${!isAllowed && "opacity-50 cursor-not-allowed"}`}
+                            onClick={() => {
+                              if (isAllowed) loadAssessment(sec.id);
+                            }}
+                          >
+                            {sec.title}
+                          </div>
+                        );
+                      })}
                     </div>
 
-                    <div style={{ marginTop: "20px", display: "flex", gap: "10px" }}>
-                     <button
-                       style={{
-                         padding: "8px 16px",
-                         borderRadius: "6px",
-                         background: "#e5e7eb",
-                         border: "none",
-                         cursor: "pointer"
-                       }}
-                       disabled={currentQuestion === 0}
-                       onClick={() =>
-                         setCurrentQuestion((c) => Math.max(c - 1, 0))
-                       }
-                     >
-                       Previous
-                     </button>
+                    {/* QUESTION AREA */}
+                    <div className="flex-1 overflow-y-auto mt-6">
+                      {sectionQuestions.length === 0 ? (
+                        <div>No questions for this section</div>
+                      ) : (
+                        <QuestionEngine
+                          questions={sectionQuestions}
+                          currentQuestion={currentQuestion}
+                          answers={answers}
+                          onSelectAnswer={handleSelectAnswer}
+                          onQuestionChange={setCurrentQuestion}
+                        />
+                      )}
+                    </div>
 
-                     <button
-                       style={{
-                         padding: "8px 16px",
-                         borderRadius: "6px",
-                         background: "#e5e7eb",
-                         border: "none",
-                         cursor: "pointer"
-                       }}
-                       disabled={currentQuestion === sectionQuestions.length - 1}
-                       onClick={() =>
-                         setCurrentQuestion((c) =>
-                           Math.min(c + 1, sectionQuestions.length - 1)
-                         )
-                       }
-                     >
-                       Next
-                     </button>
+                    {/* BUTTONS */}
+                    <div className="flex justify-between mt-4">
+                      <button
+                        disabled={currentQuestion === 0}
+                        onClick={() =>
+                          setCurrentQuestion((c) => Math.max(c - 1, 0))
+                        }
+                        className="px-4 py-2 bg-gray-200 rounded"
+                      >
+                        Previous
+                      </button>
 
-                     <button
-                       style={{
-                         padding: "8px 16px",
-                         borderRadius: "6px",
-                         background: "#10b981",
-                         color: "#fff",
-                         border: "none",
-                         cursor: "pointer"
-                       }}
-                       onClick={confirmAndSubmit}
-  
-                     >
-                       {isFinalSection
-                         ? "Submit Test"
-                         : `Submit ${activeSection?.title}`}
-                     </button>
-                   </div>
+                      <button
+                        disabled={
+                          currentQuestion === sectionQuestions.length - 1
+                        }
+                        onClick={() =>
+                          setCurrentQuestion((c) =>
+                            Math.min(c + 1, sectionQuestions.length - 1),
+                          )
+                        }
+                        className="px-4 py-2 bg-gray-200 rounded"
+                      >
+                        Next
+                      </button>
 
-                  </section>
+                      <button
+                        onClick={confirmAndSubmit}
+                        className="px-4 py-2 bg-green-500 text-white rounded"
+                      >
+                        Submit
+                      </button>
+                    </div>
+                  </div>
 
                   {/* RIGHT PANEL */}
-                  <aside className="bg-black text-white p-4 rounded-lg">
-                    <h2>Monitor Candidate</h2>
+                  <div className="w-80 bg-gray-900 text-white p-4 flex flex-col">
+                    {/* CAMERA */}
+                    <div className="h-40 bg-black rounded mb-4 overflow-hidden">
+                      <video
+                        ref={videoRef}
+                        autoPlay
+                        muted
+                        playsInline
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
 
-                    <video
-                      ref={videoRef}
-                      autoPlay
-                      muted
-                      playsInline
-                      style={{ width: "100%", borderRadius: "10px" }}
-                    />
-                  </aside>
+                    {/* QUESTION NAVIGATION */}
+                    <div>
+                      <h3 className="mb-2 font-semibold">Questions</h3>
 
+                      <div className="grid grid-cols-5 gap-2">
+                        {sectionQuestions.map((_, i) => (
+                          <button
+                            key={i}
+                            onClick={() => setCurrentQuestion(i)}
+                            className={`p-2 rounded text-sm ${
+                              i === currentQuestion
+                                ? "bg-blue-500 text-white"
+                                : "bg-gray-600"
+                            }`}
+                          >
+                            {i + 1}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            );
-          }}
-        </TimerSystem>
-      )}
+              );
+            }}
+          </TimerSystem>
+        )}
 
-      {/* MODAL */}
-      {showConfirm && (
-        <div style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          width: "100%",
-          height: "100%",
-          background: "rgba(0,0,0,0.5)",
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          zIndex: 9999
-        }}>
-          <div style={{
-            background: "#fff",
-            padding: "25px",
-            borderRadius: "12px",
-            width: "300px",
-            textAlign: "center"
-          }}>
-            <p>Are you sure you want to {confirmLabel}?</p>
-
-            <button
-              onClick={async () => {
-                setShowConfirm(false);
-                await submitCurrentSection({
-                  message: isFinalSection
-                    ? "Submitting final section..."
-                    : `Submitting ${activeSection?.title || "section"}...`
-                });
+        {/* MODAL */}
+        {showConfirm && (
+          <div
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              width: "100%",
+              height: "100%",
+              background: "rgba(0,0,0,0.5)",
+              display: "flex",
+              justifyContent: "center",
+              alignItems: "center",
+              zIndex: 9999,
+            }}
+          >
+            <div
+              style={{
+                background: "#fff",
+                padding: "25px",
+                borderRadius: "12px",
+                width: "300px",
+                textAlign: "center",
               }}
             >
-              Yes
-            </button>
+              <p>Are you sure you want to {confirmLabel}?</p>
 
-            <button onClick={() => setShowConfirm(false)}>
-              Cancel
-            </button>
+              <button
+                onClick={async () => {
+                  setShowConfirm(false);
+                  await submitCurrentSection({
+                    message: isFinalSection
+                      ? "Submitting final section..."
+                      : `Submitting ${activeSection?.title || "section"}...`,
+                  });
+                }}
+              >
+                Yes
+              </button>
+
+              <button onClick={() => setShowConfirm(false)}>Cancel</button>
+            </div>
           </div>
-        </div>
-      )}
-
+        )}
+      </div>
     </div>
-  </div>
-);
+  );
 }
 
 export default TestInterface;
